@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>校園通知單產生器 - 活動說明增強版</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"
+    crossorigin="anonymous"></script>
+
+  <style>
+    @media print {
+      .no-print {
+        display: none;
+      }
+    }
+
+    .notice-content {
+      line-height: 1.6;
+      font-family: "Microsoft JhengHei", "Heiti TC", sans-serif;
+    }
+
+    #preview {
+      width: 210mm;
+      height: 297mm;
+      box-sizing: border-box;
+      overflow: hidden;
+      background: #fff;
+      margin: 0 auto;
+      padding: 15mm 18mm;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .upload-area {
+      border: 2px dashed #cbd5e0;
+      transition: all .25s;
+    }
+
+    .upload-area:hover {
+      border-color: #4299e1;
+      background: #ebf8ff;
+    }
+
+    #pdfMount {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 210mm;
+      height: 297mm;
+      z-index: 99999;
+      background: white;
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+<body class="bg-gray-100 p-4">
+  <div class="max-w-7xl mx-auto">
+    <h1 class="text-3xl font-bold text-center mb-6 text-gray-800 no-print">校園通知單產生器</h1>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="bg-white rounded-lg shadow-lg p-6 no-print">
+        <h2 class="text-xl font-semibold mb-4 text-gray-700 border-b pb-2">填寫通知單資訊</h2>
+
+        <div class="space-y-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">學校名稱</label>
+              <input type="text" id="schoolName" value="建功國小"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">活動名稱</label>
+              <input type="text" id="activityName" value="高年級山野教育體驗活動"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg">
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">一、活動說明 (宗旨/簡介)</label>
+            <textarea id="activityIntro" rows="2"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              placeholder="例如：為增進學生對山野環境的認識，培養團體合作與問題解決能力..."></textarea>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">二、活動時間說明</label>
+            <textarea id="timeDesc" rows="2"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"></textarea>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">三、活動行程表 (圖片)</label>
+            <div class="upload-area rounded-lg p-4 text-center cursor-pointer" id="uploadArea">
+              <input type="file" id="scheduleImage" accept="image/*" class="hidden">
+              <p class="text-sm text-gray-600">點擊或拖曳上傳圖片</p>
+            </div>
+            <div id="imagePreview" class="mt-2 hidden flex items-center justify-between bg-gray-50 p-2 rounded">
+              <span class="text-xs text-gray-500">已載入行程圖</span>
+              <button type="button" onclick="removeImage()" class="text-xs text-red-600 font-bold">移除圖片</button>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">四、注意事項</label>
+            <textarea id="notes" rows="3"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"></textarea>
+          </div>
+
+          <div class="bg-blue-50 p-4 rounded-lg space-y-4 border border-blue-200">
+            <h3 class="text-sm font-bold text-blue-800">📏 版面微調 (拉動可填滿 A4)</h3>
+            <div class="grid grid-cols-1 gap-3">
+              <div>
+                <label class="flex justify-between text-xs text-gray-600 mb-1">
+                  <span>整體字體大小</span> <span id="fsVal">14px</span>
+                </label>
+                <input type="range" id="fontSizeRange" min="12" max="22" value="14" class="w-full">
+              </div>
+              <div>
+                <label class="flex justify-between text-xs text-gray-600 mb-1">
+                  <span>內容行距</span> <span id="lhVal">1.6</span>
+                </label>
+                <input type="range" id="lineHeightRange" min="12" max="35" value="16" class="w-full">
+              </div>
+              <div>
+                <label class="flex justify-between text-xs text-gray-600 mb-1">
+                  <span>行程圖片縮放 (%)</span> <span id="imgWVal">100%</span>
+                </label>
+                <input type="range" id="imgWidthRange" min="30" max="100" value="100" class="w-full">
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1 text-red-600 font-bold">截止日期</label>
+              <input type="text" id="deadline" value="10/23" class="w-full px-4 py-2 border border-red-200 rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1 text-red-600 font-bold">聯絡電話</label>
+              <input type="text" id="phone" value="(06)7880114"
+                class="w-full px-4 py-2 border border-red-200 rounded-lg">
+            </div>
+          </div>
+
+          <button id="downloadBtn"
+            class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-lg shadow-lg transition duration-200">
+            下載正式 PDF 通知單
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-gray-300 rounded-lg shadow-inner p-4 overflow-auto flex justify-center">
+        <div id="preview" class="border shadow-2xl notice-content" style="font-size: 14px;">
+          <div id="previewInner" class="h-full flex flex-col">
+            <div class="text-center font-bold mb-4" id="previewTitle"
+              style="font-size: 18px; border-bottom: 2px solid #000; padding-bottom: 8px;">
+              【<span id="previewSchool">建功國小</span> <span id="previewActivity">活動</span> 通知單暨家長同意書】
+            </div>
+
+            <div class="flex-grow">
+              <div class="section-content mb-3">
+                <div class="font-bold">一、活動說明：</div>
+                <div id="previewIntro" class="pl-4 text-gray-800"></div>
+              </div>
+
+              <div class="section-content mb-3">
+                <div class="font-bold">二、活動時間：</div>
+                <div id="previewTime" class="pl-4 text-gray-800"></div>
+              </div>
+
+              <div class="section-content mb-3">
+                <div class="font-bold">三、活動行程：</div>
+                <div id="scheduleImageContainer" class="py-2 flex justify-center">
+                  <p class="text-gray-400 text-sm italic">未上傳圖片</p>
+                </div>
+              </div>
+
+              <div class="section-content mb-3">
+                <div class="font-bold">四、注意事項：</div>
+                <div id="notesList" class="pl-4 text-gray-800"></div>
+              </div>
+            </div>
+
+            <div class="mt-auto">
+              <div style="border-top: 2px dashed #000; margin: 12px 0;"></div>
+              <div class="text-center mb-4 font-bold" style="letter-spacing: 4px; font-size: 13px;">
+                ─────── 回 ────── 條 ────── 單 ───────
+              </div>
+
+              <div class="mb-5 space-y-1 text-lg">
+                <div class="font-medium">□ 茲同意 ( )年甲班 _________ 同學參加於 <span id="replyActivity"
+                    class="underline"></span>。</div>
+                <div>□ 無法參加，辦理請假，期間會在家自行溫習功課。</div>
+                <div>□ 無法參加，當日到校。</div>
+              </div>
+
+              <div class="flex justify-between items-end border-t border-gray-100 pt-3">
+                <div id="importantInfo" class="flex flex-col space-y-1">
+                  <div class="text-red-700 font-bold" style="font-size: 16px;">
+                    ★ 請於 <span id="previewDeadline" class="underline decoration-double text-xl">10/23</span> 之前交回學務組 ★
+                  </div>
+                  <div class="font-bold text-gray-700" style="font-size: 15px;">
+                    聯絡電話：<span id="previewPhone" class="text-lg">(06)7880114</span>
+                  </div>
+                </div>
+
+                <div class="text-right">
+                  <div class="mb-3">家長簽章：____________________</div>
+                  <div class="font-bold text-lg"><span id="previewSchool2">建功國小</span> 教導處 敬上</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="pdfMount"></div>
+
+  <script>
+    let uploadedImageData = null;
+
+    // 預設資料
+    document.getElementById('activityIntro').value = `為增進學生對山野環境的認識與尊重，體驗戶外生活之美，並透過實作課程培養學生的團體合作精神與自主解決問題之能力。`;
+    document.getElementById('timeDesc').value = `11月13日(星期四) 08:00 出發，11月14日(星期五) 16:00 返回。`;
+    document.getElementById('notes').value = `請穿著運動服裝並備妥換洗衣物。\n攜帶個人健保卡及必備藥品。\n為落實環保，請自備個人盥洗用具及飲水杯。`;
+
+    // 檔案處理
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('scheduleImage');
+    uploadArea.onclick = () => fileInput.click();
+    fileInput.onchange = (e) => {
+      if (e.target.files.length > 0) {
+        const reader = new FileReader();
+        reader.onload = (ev) => { uploadedImageData = ev.target.result; document.getElementById('imagePreview').classList.remove('hidden'); updatePreview(); };
+        reader.readAsDataURL(e.target.files[0]);
+      }
+    };
+
+    function removeImage() { uploadedImageData = null; document.getElementById('imagePreview').classList.add('hidden'); fileInput.value = ''; updatePreview(); }
+
+    function updatePreview() {
+      document.getElementById('previewSchool').textContent = document.getElementById('schoolName').value;
+      document.getElementById('previewSchool2').textContent = document.getElementById('schoolName').value;
+      document.getElementById('previewActivity').textContent = document.getElementById('activityName').value;
+      document.getElementById('replyActivity').textContent = document.getElementById('activityName').value;
+      document.getElementById('previewIntro').textContent = document.getElementById('activityIntro').value;
+      document.getElementById('previewTime').textContent = document.getElementById('timeDesc').value;
+      document.getElementById('previewPhone').textContent = document.getElementById('phone').value;
+      document.getElementById('previewDeadline').textContent = document.getElementById('deadline').value;
+
+      const container = document.getElementById('scheduleImageContainer');
+      container.innerHTML = '';
+      if (uploadedImageData) {
+        const img = document.createElement('img');
+        img.src = uploadedImageData;
+        img.style.width = document.getElementById('imgWidthRange').value + '%';
+        img.className = 'border rounded shadow-sm';
+        container.appendChild(img);
+      } else {
+        container.innerHTML = '<p class="text-gray-400 text-sm italic">未上傳圖片</p>';
+      }
+
+      const notesList = document.getElementById('notesList');
+      notesList.innerHTML = '';
+      document.getElementById('notes').value.split('\n').filter(n => n.trim()).forEach(note => {
+        const div = document.createElement('div');
+        div.textContent = '◆ ' + note;
+        notesList.appendChild(div);
+      });
+    }
+
+    // 滑桿監聽
+    document.getElementById('fontSizeRange').oninput = (e) => {
+      const v = parseInt(e.target.value);
+      document.getElementById('fsVal').textContent = v + 'px';
+      document.getElementById('preview').style.fontSize = v + 'px';
+      document.getElementById('previewTitle').style.fontSize = (v * 1.3) + 'px';
+      document.getElementById('previewDeadline').parentElement.style.fontSize = (v + 2) + 'px';
+      document.getElementById('previewPhone').parentElement.style.fontSize = (v + 1) + 'px';
+    };
+
+    document.getElementById('lineHeightRange').oninput = (e) => {
+      const v = e.target.value / 10;
+      document.getElementById('lhVal').textContent = v;
+      document.querySelectorAll('.section-content').forEach(el => el.style.lineHeight = v);
+      document.getElementById('notesList').style.lineHeight = v;
+    };
+
+    document.getElementById('imgWidthRange').oninput = (e) => {
+      document.getElementById('imgWVal').textContent = e.target.value + '%';
+      updatePreview();
+    };
+
+    ['schoolName', 'activityName', 'activityIntro', 'timeDesc', 'notes', 'phone', 'deadline'].forEach(id => {
+      document.getElementById(id).addEventListener('input', updatePreview);
+    });
+
+    document.getElementById('downloadBtn').onclick = async function () {
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = '產生 PDF 中...';
+
+      const mount = document.getElementById('pdfMount');
+      const clone = document.getElementById('preview').cloneNode(true);
+      mount.innerHTML = '';
+      mount.appendChild(clone);
+
+      const opt = {
+        margin: 0,
+        filename: `${document.getElementById('activityName').value}_通知單.pdf`,
+        image: { type: 'jpeg', quality: 1.0 },
+        html2canvas: { scale: 2, useCORS: true, scrollY: 0, scrollX: 0, windowScrolling: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      try { await html2pdf().set(opt).from(clone).save(); } catch (e) { alert('下載失敗'); } finally { mount.innerHTML = ''; btn.disabled = false; btn.textContent = '下載正式 PDF 通知單'; }
+    };
+
+    updatePreview();
+  </script>
+</body>
+
+</html>
