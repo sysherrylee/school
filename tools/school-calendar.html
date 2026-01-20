@@ -77,16 +77,33 @@
     // Firebase 模組載入
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
     import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
-    import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, addDoc, deleteDoc, writeBatch } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+    import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, addDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 
-    // 智慧型 Firebase 配置檢查：防止 GitHub Pages 空白
+    // --- 全域工具函式與常數 (移出 App 以避免 ReferenceError) ---
+    const semesterMonths = [1, 2, 3, 4, 5]; // 2月至6月
+    const yearInView = 2026;
+
+    const parseDate = (dateStr) => {
+      if (!dateStr) return new Date();
+      const [y, m, d] = dateStr.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    };
+
+    const isDateInRange = (dStr, start, end) => dStr >= start && dStr <= end;
+
+    const isWeekendDay = (dateStr) => {
+      const d = parseDate(dateStr);
+      const day = d.getDay();
+      return day === 0 || day === 6;
+    };
+
+    // Firebase 配置檢查
     const getFirebaseConfig = () => {
       try {
         if (typeof __firebase_config !== 'undefined' && __firebase_config) {
           return JSON.parse(__firebase_config);
         }
       } catch (e) { }
-      // 外部環境配置回傳
       return null;
     };
 
@@ -122,11 +139,10 @@
       const [showImagePreview, setShowImagePreview] = useState(false);
       const [showExportMenu, setShowExportMenu] = useState(false);
       const [exporting, setExporting] = useState(false);
+      const [viewDate, setViewDate] = useState(new Date(2026, 1, 1));
       const posterRef = useRef(null);
       const menuRef = useRef(null);
       const fileInputRef = useRef(null);
-
-      const semesterMonths = [1, 2, 3, 4, 5];
 
       const [headerInfo, setHeaderInfo] = useState({
         schoolName: "台南市七股區建功國民小學",
@@ -152,14 +168,17 @@
           return;
         }
         const initAuth = async () => {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } else {
-            await signInAnonymously(auth);
-          }
+          try {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+              await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+              await signInAnonymously(auth);
+            }
+          } catch (e) { console.error("Auth Failed", e); }
         };
         initAuth();
-        return onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); });
+        const unsubscribe = onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); });
+        return () => unsubscribe();
       }, []);
 
       // 2. 資料同步
@@ -189,11 +208,12 @@
       const handleAddEvent = async (e) => {
         e.preventDefault();
         if (!newEvent.title) return;
+        const actualEndDate = newEvent.endDate < newEvent.startDate ? newEvent.startDate : newEvent.endDate;
         if (user && db) {
           const eventsColRef = collection(db, 'artifacts', appId, 'users', user.uid, 'events');
-          await addDoc(eventsColRef, { ...newEvent });
+          await addDoc(eventsColRef, { ...newEvent, endDate: actualEndDate });
         } else {
-          setEvents([...events, { ...newEvent, id: Date.now() }]);
+          setEvents([...events, { ...newEvent, endDate: actualEndDate, id: Date.now() }]);
         }
         setNewEvent({ ...newEvent, title: '', isHoliday: false, isImportant: false });
       };
@@ -240,6 +260,7 @@
       // --- 匯出功能 ---
       const exportPDF = () => { setShowPreview(false); setTimeout(() => window.print(), 100); };
       const exportPNG = async () => {
+        if (!window.html2canvas) return;
         setExporting(true);
         const canvas = await window.html2canvas(posterRef.current, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
         const link = document.createElement('a');
@@ -254,7 +275,7 @@
         const blob = new Blob(['\ufeff', `<html><body><h2>${fullTitle}</h2>${table}</body></html>`], { type: 'application/msword' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `${fullTitle}.doc`;
+        link.download = `${fullTitle}_清單.doc`;
         link.click();
       };
       const exportJSON = () => {
@@ -265,16 +286,20 @@
         link.click();
       };
 
+      // 智慧出席天數計算
       const calculateAttendance = (m) => {
-        const daysInMonth = new Date(2026, m + 1, 0).getDate();
+        const daysInMonth = new Date(yearInView, m + 1, 0).getDate();
         let count = 0;
-        const openingDay = events.find(e => e.title.includes("開學日"))?.startDate || headerInfo.semesterStartDate;
+        // 優先尋找清單中的「開學日」
+        const openingEvent = events.find(e => e.title.includes("開學日"));
+        const startLimit = openingEvent ? openingEvent.startDate : headerInfo.semesterStartDate;
+
         for (let d = 1; d <= daysInMonth; d++) {
-          const dStr = `2026-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-          if (dStr < openingDay || dStr > headerInfo.semesterEndDate) continue;
-          const date = new Date(2026, m, d);
+          const dStr = `${yearInView}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+          if (dStr < startLimit || dStr > headerInfo.semesterEndDate) continue;
+          const date = new Date(yearInView, m, d);
           const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-          const isHoliday = events.some(e => e.isHoliday && dStr >= e.startDate && dStr <= e.endDate);
+          const isHoliday = events.some(e => e.isHoliday && isDateInRange(dStr, e.startDate, e.endDate));
           if (!isWeekend && !isHoliday) count++;
         }
         return count;
@@ -283,19 +308,17 @@
       const calculateWeek = (m, row) => {
         const start = new Date(headerInfo.semesterStartDate);
         const sun = new Date(start); sun.setDate(start.getDate() - start.getDay());
-        const currentSun = new Date(2026, m, 1);
+        const currentSun = new Date(yearInView, m, 1);
         currentSun.setDate(1 - currentSun.getDay() + row * 7);
         const w = Math.round((currentSun - sun) / (7 * 24 * 60 * 60 * 1000)) + 1;
         return w > 0 ? w : "";
       };
 
-      // --- 修正後的更大日曆組件 ---
       const CalendarGrid = ({ m, isMain = false }) => {
-        const firstDay = new Date(2026, m, 1).getDay();
-        const days = new Date(2026, m + 1, 0).getDate();
+        const firstDay = new Date(yearInView, m, 1).getDay();
+        const days = new Date(yearInView, m + 1, 0).getDate();
         const rows = Math.ceil((firstDay + days) / 7);
 
-        // 動態高度與字體大小
         const cellHeight = isMain ? 'h-24' : 'h-8';
         const dayFontSize = isMain ? 'text-lg' : 'text-[10px]';
         const weekFontSize = isMain ? 'text-sm' : 'text-[8px]';
@@ -314,8 +337,8 @@
                   {[...Array(7)].map((_, c) => {
                     const dNum = r * 7 + c - firstDay + 1;
                     const isValid = dNum > 0 && dNum <= days;
-                    const dStr = `2026-${String(m + 1).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
-                    const dayEvents = events.filter(e => dStr >= e.startDate && dStr <= e.endDate);
+                    const dStr = `${yearInView}-${String(m + 1).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+                    const dayEvents = events.filter(e => isDateInRange(dStr, e.startDate, e.endDate));
                     const isHoliday = dayEvents.some(e => e.isHoliday), isImportant = dayEvents.some(e => e.isImportant);
                     const isSatSun = c === 0 || c === 6;
                     let bg = "bg-white", text = isSatSun ? "text-red-600" : "text-black";
@@ -349,7 +372,7 @@
                 <tr key={`tr-${monthIdx}-${r}`}>{cols.map((_, c) => {
                   const e = grouped[c][r];
                   if (!e) return <td key={`td-${monthIdx}-${r}-${c}`} className="border border-black p-1 h-14"></td>;
-                  const isWeekend = new Date(e.startDate).getDay() === 0 || new Date(e.startDate).getDay() === 6;
+                  const isWeekend = isWeekendDay(e.startDate);
                   return <td key={`td-${monthIdx}-${r}-${c}`} className="border border-black p-1.5 align-top h-14">
                     <div className={e.isImportant ? 'text-green-700 font-bold' : (isWeekend ? 'text-red-500 font-bold' : '')}>• {e.startDate.split('-')[2]}日 {e.title}</div>
                   </td>;
@@ -462,7 +485,7 @@
                         {e.startDate !== e.endDate && <span className="text-[9px] text-blue-400 font-bold">~ {e.endDate}</span>}
                       </div>
                       <span className={`text-[10px] px-3 py-1 rounded-full border font-bold ${e.isImportant ? 'text-green-600 border-green-200 bg-green-50' : (e.isHoliday ? 'text-red-600 border-red-200 bg-red-50' : 'text-slate-500 bg-white shadow-sm')}`}>{e.tag}</span>
-                      <span className={`font-bold text-base ${e.isImportant ? 'text-green-700' : (new Date(e.startDate).getDay() === 0 || new Date(e.startDate).getDay() === 6 ? 'text-red-500' : 'text-slate-700')}`}>
+                      <span className={`font-bold text-base ${e.isImportant ? 'text-green-700' : (isWeekendDay(e.startDate) ? 'text-red-500' : 'text-slate-700')}`}>
                         {e.isImportant && '★ '}{e.title}
                       </span>
                     </div>
@@ -482,7 +505,7 @@
           {/* PNG 預覽彈窗 (月曆更大版) */}
           {showImagePreview && (
             <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
-              <div className="bg-white w-full max-w-6xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden text-black">
+              <div className="bg-white w-full max-w-6xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden text-black text-black">
                 <div className="p-6 border-b flex justify-between bg-blue-50 font-bold items-center">
                   <span className="flex items-center gap-3 text-blue-700 text-lg font-bold"><Icon name="image" size={24} /> PNG 月曆圖檔預覽 (全學期)</span>
                   <button onClick={() => setShowImagePreview(false)} className="hover:bg-red-100 hover:text-red-600 rounded-full p-2 transition-all"><Icon name="x" size={24} /></button>
@@ -527,9 +550,7 @@
                     <div className="space-y-12 flex-1">
                       {semesterMonths.map(m => (
                         <div key={`preview-m-${m}`} className="grid grid-cols-12 gap-8 items-start page-break-inside-avoid">
-                          {/* 日曆改為 col-span-3 (更大) */}
                           <div className="col-span-3"><CalendarGrid m={m} isMain={false} /></div>
-                          {/* 表格改為 col-span-9 */}
                           <div className="col-span-9"><EventTable monthIdx={m} /></div>
                         </div>
                       ))}
