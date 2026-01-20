@@ -49,7 +49,7 @@
 
       @page {
         size: A4;
-        margin: 0;
+        margin: 0.5cm;
       }
     }
 
@@ -79,14 +79,20 @@
     import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
     import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, addDoc, deleteDoc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 
-    // --- 全域工具函式與常數 (移出 App 以避免 ReferenceError) ---
+    // --- 全域常數與工具函式 ---
     const semesterMonths = [1, 2, 3, 4, 5]; // 2月至6月
-    const yearInView = 2026;
+    const currentSystemYear = 2026;
 
     const parseDate = (dateStr) => {
       if (!dateStr) return new Date();
       const [y, m, d] = dateStr.split('-').map(Number);
       return new Date(y, m - 1, d);
+    };
+
+    const formatDateToShort = (dateStr) => {
+      if (!dateStr) return "";
+      const d = parseDate(dateStr);
+      return `${d.getMonth() + 1}/${d.getDate()}`;
     };
 
     const isDateInRange = (dStr, start, end) => dStr >= start && dStr <= end;
@@ -139,7 +145,6 @@
       const [showImagePreview, setShowImagePreview] = useState(false);
       const [showExportMenu, setShowExportMenu] = useState(false);
       const [exporting, setExporting] = useState(false);
-      const [viewDate, setViewDate] = useState(new Date(2026, 1, 1));
       const posterRef = useRef(null);
       const menuRef = useRef(null);
       const fileInputRef = useRef(null);
@@ -163,10 +168,7 @@
 
       // 1. 身分驗證
       useEffect(() => {
-        if (!config) {
-          setLoading(false);
-          return;
-        }
+        if (!config) { setLoading(false); return; }
         const initAuth = async () => {
           try {
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -174,11 +176,10 @@
             } else {
               await signInAnonymously(auth);
             }
-          } catch (e) { console.error("Auth Failed", e); }
+          } catch (e) { setLoading(false); }
         };
         initAuth();
-        const unsubscribe = onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); });
-        return () => unsubscribe();
+        return onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); });
       }, []);
 
       // 2. 資料同步
@@ -209,11 +210,13 @@
         e.preventDefault();
         if (!newEvent.title) return;
         const actualEndDate = newEvent.endDate < newEvent.startDate ? newEvent.startDate : newEvent.endDate;
+        const dataToSave = { ...newEvent, endDate: actualEndDate };
+
         if (user && db) {
           const eventsColRef = collection(db, 'artifacts', appId, 'users', user.uid, 'events');
-          await addDoc(eventsColRef, { ...newEvent, endDate: actualEndDate });
+          await addDoc(eventsColRef, dataToSave);
         } else {
-          setEvents([...events, { ...newEvent, endDate: actualEndDate, id: Date.now() }]);
+          setEvents([...events, { ...dataToSave, id: Date.now() }]);
         }
         setNewEvent({ ...newEvent, title: '', isHoliday: false, isImportant: false });
       };
@@ -227,7 +230,7 @@
         }
       };
 
-      // --- 匯入功能 ---
+      // --- 匯入功能修復 ---
       const handleImport = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -238,16 +241,36 @@
             if (Array.isArray(importedData)) {
               if (user && db) {
                 const eventsColRef = collection(db, 'artifacts', appId, 'users', user.uid, 'events');
+                // 批量新增，確保資料結構正確
                 for (const item of importedData) {
                   const { id, ...data } = item;
-                  await addDoc(eventsColRef, data);
+                  // 格式對應檢查
+                  const cleanedData = {
+                    startDate: data.startDate || data.date || "2026-02-23",
+                    endDate: data.endDate || data.startDate || data.date || "2026-02-23",
+                    title: data.title || "未命名事項",
+                    tag: data.tag || "教務處",
+                    isHoliday: !!data.isHoliday,
+                    isImportant: !!data.isImportant
+                  };
+                  await addDoc(eventsColRef, cleanedData);
                 }
               } else {
-                setEvents([...events, ...importedData]);
+                // 單機模式合併並更新
+                setEvents(prev => {
+                  const merged = [...prev, ...importedData.map(d => ({
+                    ...d,
+                    id: d.id || Date.now() + Math.random()
+                  }))];
+                  return merged;
+                });
               }
             }
           } catch (err) {
             console.error("Import failed", err);
+          } finally {
+            // 重置檔案選取器，讓同一個檔案可以重複選取
+            if (fileInputRef.current) fileInputRef.current.value = "";
           }
         };
         reader.readAsText(file);
@@ -260,7 +283,6 @@
       // --- 匯出功能 ---
       const exportPDF = () => { setShowPreview(false); setTimeout(() => window.print(), 100); };
       const exportPNG = async () => {
-        if (!window.html2canvas) return;
         setExporting(true);
         const canvas = await window.html2canvas(posterRef.current, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
         const link = document.createElement('a');
@@ -271,7 +293,7 @@
       };
       const exportWord = () => {
         const sorted = events.sort((a, b) => a.startDate.localeCompare(b.startDate));
-        const table = `<table border="1" style="border-collapse:collapse;width:100%;"><tr><th>日期</th><th>處室</th><th>事項</th></tr>${sorted.map(e => `<tr><td>${e.startDate}</td><td>${e.tag}</td><td>${e.title}</td></tr>`).join('')}</table>`;
+        const table = `<table border="1" style="border-collapse:collapse;width:100%;"><tr><th>日期</th><th>處室</th><th>事項</th></tr>${sorted.map(e => `<tr><td>${formatDateToShort(e.startDate)}${e.startDate !== e.endDate ? '~' + formatDateToShort(e.endDate) : ''}</td><td>${e.tag}</td><td>${e.title}</td></tr>`).join('')}</table>`;
         const blob = new Blob(['\ufeff', `<html><body><h2>${fullTitle}</h2>${table}</body></html>`], { type: 'application/msword' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
@@ -286,21 +308,49 @@
         link.click();
       };
 
-      // 智慧出席天數計算
+      const exportICS = () => {
+        const sortedEvents = [...events].sort((a, b) => a.startDate.localeCompare(b.startDate));
+        let icsContent = [
+          'BEGIN:VCALENDAR',
+          'VERSION:2.0',
+          'PRODID:-//School Calendar//EN',
+          'CALSCALE:GREGORIAN',
+          'METHOD:PUBLISH'
+        ];
+
+        sortedEvents.forEach(e => {
+          const start = e.startDate.replace(/-/g, '');
+          // ICS 結束日期不包含該日，所以需 +1 天
+          const endDateObj = parseDate(e.endDate);
+          endDateObj.setDate(endDateObj.getDate() + 1);
+          const end = endDateObj.toISOString().split('T')[0].replace(/-/g, '');
+
+          icsContent.push('BEGIN:VEVENT');
+          icsContent.push(`DTSTART;VALUE=DATE:${start}`);
+          icsContent.push(`DTEND;VALUE=DATE:${end}`);
+          icsContent.push(`SUMMARY:${e.isImportant ? '★ ' : ''}${e.title}`);
+          icsContent.push(`DESCRIPTION:處室: ${e.tag}${e.isImportant ? ' (重要事件)' : ''}`);
+          icsContent.push('END:VEVENT');
+        });
+
+        icsContent.push('END:VCALENDAR');
+        const blob = new Blob([icsContent.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${fullTitle}.ics`;
+        link.click();
+      };
+
+      // 統計天數
       const calculateAttendance = (m) => {
-        const daysInMonth = new Date(yearInView, m + 1, 0).getDate();
+        const daysInMonth = new Date(currentSystemYear, m + 1, 0).getDate();
         let count = 0;
-        // 優先尋找清單中的「開學日」
         const openingEvent = events.find(e => e.title.includes("開學日"));
         const startLimit = openingEvent ? openingEvent.startDate : headerInfo.semesterStartDate;
-
         for (let d = 1; d <= daysInMonth; d++) {
-          const dStr = `${yearInView}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+          const dStr = `2026-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
           if (dStr < startLimit || dStr > headerInfo.semesterEndDate) continue;
-          const date = new Date(yearInView, m, d);
-          const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-          const isHoliday = events.some(e => e.isHoliday && isDateInRange(dStr, e.startDate, e.endDate));
-          if (!isWeekend && !isHoliday) count++;
+          if (!isWeekendDay(dStr) && !events.some(e => e.isHoliday && isDateInRange(dStr, e.startDate, e.endDate))) count++;
         }
         return count;
       };
@@ -308,22 +358,17 @@
       const calculateWeek = (m, row) => {
         const start = new Date(headerInfo.semesterStartDate);
         const sun = new Date(start); sun.setDate(start.getDate() - start.getDay());
-        const currentSun = new Date(yearInView, m, 1);
+        const currentSun = new Date(2026, m, 1);
         currentSun.setDate(1 - currentSun.getDay() + row * 7);
         const w = Math.round((currentSun - sun) / (7 * 24 * 60 * 60 * 1000)) + 1;
         return w > 0 ? w : "";
       };
 
       const CalendarGrid = ({ m, isMain = false }) => {
-        const firstDay = new Date(yearInView, m, 1).getDay();
-        const days = new Date(yearInView, m + 1, 0).getDate();
+        const firstDay = new Date(currentSystemYear, m, 1).getDay();
+        const days = new Date(currentSystemYear, m + 1, 0).getDate();
         const rows = Math.ceil((firstDay + days) / 7);
-
         const cellHeight = isMain ? 'h-24' : 'h-8';
-        const dayFontSize = isMain ? 'text-lg' : 'text-[10px]';
-        const weekFontSize = isMain ? 'text-sm' : 'text-[8px]';
-        const attendanceFontSize = isMain ? 'text-sm' : 'text-[8px]';
-
         return (
           <div className={`border border-black rounded bg-white shadow-sm text-black ${isMain ? 'p-4' : 'p-1.5'}`}>
             <div className={`font-bold text-center bg-gray-100 border-b border-black mb-1 ${isMain ? 'text-xl py-3' : 'text-[11px] py-1'}`}>{m + 1}月</div>
@@ -333,96 +378,110 @@
             <div className="grid grid-cols-8 gap-px bg-gray-300 border border-black">
               {[...Array(rows)].map((_, r) => (
                 <Fragment key={`m-${m}-r-${r}`}>
-                  <div className={`bg-blue-50 flex items-center justify-center font-bold border-r border-gray-300 ${cellHeight} ${weekFontSize}`}>{calculateWeek(m, r)}</div>
+                  <div className={`bg-blue-50 flex items-center justify-center font-bold border-r border-gray-300 ${cellHeight} ${isMain ? 'text-sm' : 'text-[8px]'}`}>{calculateWeek(m, r)}</div>
                   {[...Array(7)].map((_, c) => {
                     const dNum = r * 7 + c - firstDay + 1;
                     const isValid = dNum > 0 && dNum <= days;
-                    const dStr = `${yearInView}-${String(m + 1).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+                    const dStr = `${currentSystemYear}-${String(m + 1).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
                     const dayEvents = events.filter(e => isDateInRange(dStr, e.startDate, e.endDate));
                     const isHoliday = dayEvents.some(e => e.isHoliday), isImportant = dayEvents.some(e => e.isImportant);
                     const isSatSun = c === 0 || c === 6;
                     let bg = "bg-white", text = isSatSun ? "text-red-600" : "text-black";
                     if (isImportant) { bg = "bg-green-200"; text = "text-green-800 font-bold"; }
-                    else if (isHoliday) { bg = "bg-red-100"; }
+                    else if (isHoliday) { bg = "bg-red-100"; text = "text-red-600 font-bold"; }
                     return (
-                      <div key={`m-${m}-r-${r}-c-${c}`} className={`${bg} ${text} flex flex-col items-center justify-start border-r border-b border-gray-100 last:border-r-0 ${cellHeight} ${isMain ? 'p-1.5' : 'p-0.5'}`}>
-                        <span className={`${dayFontSize} font-bold`}>{isValid ? dNum : ''}</span>
-                        {isMain && isValid && dayEvents.map(e => <div key={e.id} className={`w-full truncate text-[10px] mt-1 px-1 rounded shadow-sm ${e.isImportant ? 'bg-green-600 text-white font-bold' : 'bg-white/70 text-slate-700'}`}>{e.title}</div>)}
+                      <div key={`m-${m}-r-${r}-c-${c}`} className={`${bg} ${text} flex flex-col items-center justify-start border-r border-b border-gray-100 last:border-r-0 ${cellHeight} p-0.5`}>
+                        <span className={`${isMain ? 'text-lg' : 'text-[10px]'} font-bold`}>{isValid ? dNum : ''}</span>
+                        {isMain && isValid && dayEvents.map(e => <div key={e.id} className={`w-full truncate text-[10px] mt-1 px-1 rounded shadow-sm ${e.isImportant ? 'bg-green-600 text-white font-bold' : (e.isHoliday ? 'bg-red-50 text-red-700 font-bold' : 'bg-white/70 text-slate-700')}`}>{e.title}</div>)}
                       </div>
                     );
                   })}
                 </Fragment>
               ))}
             </div>
-            <div className={`text-center font-bold text-blue-700 mt-2 border-t border-black pt-1.5 ${attendanceFontSize}`}>學生出席天數統計: {calculateAttendance(m)}天</div>
+            <div className={`text-center font-bold text-blue-700 mt-2 border-t border-black pt-1.5 ${isMain ? 'text-sm' : 'text-[8px]'}`}>學生出席天數: {calculateAttendance(m)}天</div>
           </div>
         );
       };
 
       const EventTable = ({ monthIdx }) => {
         const cols = ["教務處", "學務處", "總務處", "備註"];
-        const mEvents = events.filter(e => parseDate(e.startDate).getMonth() === monthIdx).sort((a, b) => a.startDate.localeCompare(b.startDate));
-        const grouped = cols.map(c => mEvents.filter(e => e.tag === c));
-        const maxRows = Math.max(...grouped.map(a => a.length), 1);
+        const mEvents = events.filter(e => {
+          const startM = parseDate(e.startDate).getMonth();
+          const endM = parseDate(e.endDate).getMonth();
+          return startM === monthIdx || endM === monthIdx || (startM < monthIdx && endM > monthIdx);
+        }).sort((a, b) => a.startDate.localeCompare(b.startDate));
+
         return (
           <table className="w-full border-collapse border border-black text-[11px] text-black">
             <thead><tr className="bg-gray-100">{cols.map(c => <th key={c} className="border border-black p-1.5 w-1/4">{c}</th>)}</tr></thead>
             <tbody>
-              {[...Array(maxRows)].map((_, r) => (
-                <tr key={`tr-${monthIdx}-${r}`}>{cols.map((_, c) => {
-                  const e = grouped[c][r];
-                  if (!e) return <td key={`td-${monthIdx}-${r}-${c}`} className="border border-black p-1 h-14"></td>;
-                  const isWeekend = isWeekendDay(e.startDate);
-                  return <td key={`td-${monthIdx}-${r}-${c}`} className="border border-black p-1.5 align-top h-14">
-                    <div className={e.isImportant ? 'text-green-700 font-bold' : (isWeekend ? 'text-red-500 font-bold' : '')}>• {e.startDate.split('-')[2]}日 {e.title}</div>
-                  </td>;
-                })}</tr>
-              ))}
+              <tr>
+                {cols.map((dept, c) => {
+                  const deptEvents = mEvents.filter(ev => ev.tag === dept);
+                  return (
+                    <td key={`td-${monthIdx}-${c}`} className="border border-black p-2 align-top h-40 bg-white">
+                      {deptEvents.length > 0 ? deptEvents.map((e, idx) => {
+                        const isWeekend = isWeekendDay(e.startDate);
+                        const dateStr = e.startDate === e.endDate ? formatDateToShort(e.startDate) : `${formatDateToShort(e.startDate)}~${formatDateToShort(e.endDate)}`;
+                        let textColor = "text-black";
+                        if (e.isHoliday) textColor = "text-red-500 font-bold";
+                        else if (e.isImportant) textColor = "text-green-700 font-bold";
+                        else if (isWeekend) textColor = "text-red-500 font-bold";
+
+                        return (
+                          <div key={idx} className={`${textColor} mb-1 leading-tight`}>
+                            <span className="inline-block bg-slate-100 rounded px-1 text-[8px] mr-1 text-slate-500 font-bold">{dateStr}</span>
+                            {e.title}
+                          </div>
+                        );
+                      }) : null}
+                    </td>
+                  );
+                })}
+              </tr>
             </tbody>
           </table>
         );
       };
 
-      if (loading) return <div className="h-screen flex flex-col items-center justify-center font-bold text-slate-500"><Icon name="loader-2" className="animate-spin mb-2" size={32} />同步校務資料中...</div>;
+      if (loading) return <div className="h-screen flex flex-col items-center justify-center font-bold text-slate-500"><Icon name="loader-2" className="animate-spin mb-2" size={32} />資料載入中...</div>;
 
       return (
         <div className="min-h-screen">
           <nav className="bg-white border-b sticky top-0 z-30 px-6 py-4 flex justify-between items-center print:hidden shadow-sm">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 text-black">
               <Icon name="calendar" className="text-blue-600" size={24} />
               <h1 className="text-xl font-bold text-slate-700">校園行事管理系統</h1>
-              {!config && <span className="text-[10px] bg-amber-50 text-amber-600 px-2 py-1 rounded-full font-bold">單機模式 (未連接 Firebase)</span>}
+              {!config && <span className="text-[10px] bg-amber-50 text-amber-600 px-2 py-1 rounded-full font-bold">單機模式</span>}
             </div>
             <div className="flex gap-2">
               <div className="relative" ref={menuRef}>
-                <button onClick={() => setShowExportMenu(!showExportMenu)} className="flex items-center gap-2 px-4 py-2 border rounded-lg bg-white text-slate-600 font-bold transition-all hover:bg-slate-50 shadow-sm">
+                <button onClick={() => setShowExportMenu(!showExportMenu)} className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg bg-white text-slate-600 font-bold hover:bg-slate-50 shadow-sm transition-all">
                   <Icon name="share-2" /> 預覽與匯出 <Icon name="chevron-down" size={14} />
                 </button>
                 {showExportMenu && (
-                  <div className="absolute right-0 mt-2 w-64 bg-white border rounded-xl dropdown-shadow py-2 z-50 overflow-hidden text-black">
-                    <button onClick={() => { setShowPreview(true); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center gap-3 font-bold text-slate-700 transition-colors"><Icon name="eye" className="text-blue-500" />PDF 報表預覽</button>
-                    <button onClick={() => { setShowImagePreview(true); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center gap-3 font-bold text-slate-700 transition-colors"><Icon name="image" className="text-purple-500" />PNG 月曆圖預覽</button>
+                  <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl dropdown-shadow py-2 z-50 overflow-hidden text-black">
+                    <button onClick={() => { setShowPreview(true); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center gap-3 font-bold transition-colors"><Icon name="eye" className="text-blue-500" />PDF 報表格式預覽</button>
+                    <button onClick={() => { setShowImagePreview(true); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center gap-3 font-bold transition-colors"><Icon name="image" className="text-purple-500" />PNG 月曆圖預覽</button>
                     <div className="border-t my-1"></div>
-                    <button onClick={exportWord} className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center gap-3 transition-colors"><Icon name="file-text" className="text-blue-400" />匯出 Word 表格</button>
-                    <button onClick={exportJSON} className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center gap-3 transition-colors"><Icon name="save" className="text-amber-500" />備份資料 (JSON)</button>
+                    <button onClick={() => { exportWord(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center gap-3 transition-colors"><Icon name="file-text" className="text-blue-400" />匯出 Word 表格</button>
+                    <button onClick={() => { exportICS(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center gap-3 font-bold text-blue-600 transition-colors"><Icon name="calendar-days" />Google 日曆匯出 (.ics)</button>
+                    <button onClick={() => { exportJSON(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center gap-3 transition-colors"><Icon name="save" className="text-amber-500" />備份資料 (JSON)</button>
                   </div>
                 )}
               </div>
-              <button onClick={exportPDF} className="px-5 py-2 bg-slate-800 text-white rounded-lg font-bold shadow-md hover:bg-slate-900 transition-all active:scale-95 flex items-center gap-2"><Icon name="download" size={16} />直接匯出 PDF</button>
+              <button onClick={exportPDF} className="px-5 py-2 bg-slate-800 text-white rounded-lg font-bold shadow-md hover:bg-slate-900 active:scale-95 flex items-center gap-2"><Icon name="download" size={16} />直接列印 PDF</button>
             </div>
           </nav>
 
-          <main className="max-w-6xl mx-auto p-6 flex flex-col gap-10 print:hidden">
-
+          <main className="max-w-6xl mx-auto p-6 flex flex-col gap-10 print:hidden text-black">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               {/* 1. 學期基礎設定 */}
-              <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col space-y-5 h-full text-black">
-                <div className="flex items-center gap-3 border-b pb-4">
-                  <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500"><Icon name="settings" size={20} /></div>
-                  <h3 className="font-bold text-lg">1. 學期基礎設定</h3>
-                </div>
+              <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col space-y-5 h-full">
+                <div className="flex items-center gap-3 border-b pb-4"><div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500"><Icon name="settings" size={20} /></div><h3 className="font-bold text-lg">1. 學期基礎設定</h3></div>
                 <div className="space-y-4 text-sm">
-                  <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">學校全銜</label><input className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none transition-all" value={headerInfo.schoolName} onChange={e => saveHeaderInfo({ ...headerInfo, schoolName: e.target.value })} /></div>
+                  <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">學校全銜</label><input className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100" value={headerInfo.schoolName} onChange={e => saveHeaderInfo({ ...headerInfo, schoolName: e.target.value })} /></div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">學年度</label><input className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg w-full outline-none focus:ring-2 focus:ring-blue-100" value={headerInfo.academicYear} onChange={e => saveHeaderInfo({ ...headerInfo, academicYear: e.target.value })} /></div>
                     <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">學期名稱</label><input className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg w-full outline-none focus:ring-2 focus:ring-blue-100" value={headerInfo.semester} onChange={e => saveHeaderInfo({ ...headerInfo, semester: e.target.value })} /></div>
@@ -431,156 +490,97 @@
                     <div className="space-y-1">學期開始日期<input type="date" className="w-full p-2.5 bg-slate-50 border border-blue-100 rounded-lg mt-1 text-black font-normal outline-none focus:ring-2 focus:ring-blue-200" value={headerInfo.semesterStartDate} onChange={e => saveHeaderInfo({ ...headerInfo, semesterStartDate: e.target.value })} /></div>
                     <div className="space-y-1">學期結束日期<input type="date" className="w-full p-2.5 bg-slate-50 border border-blue-100 rounded-lg mt-1 text-black font-normal outline-none focus:ring-2 focus:ring-blue-200" value={headerInfo.semesterEndDate} onChange={e => saveHeaderInfo({ ...headerInfo, semesterEndDate: e.target.value })} /></div>
                   </div>
-                  <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">版本號碼 (顯示於右上角)</label><input className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100" value={headerInfo.version} onChange={e => saveHeaderInfo({ ...headerInfo, version: e.target.value })} /></div>
+                  <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">版本號碼</label><input className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100" value={headerInfo.version} onChange={e => saveHeaderInfo({ ...headerInfo, version: e.target.value })} /></div>
                 </div>
               </section>
 
               {/* 2. 新增行事事項 */}
-              <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col space-y-5 h-full text-black">
-                <div className="flex items-center gap-3 border-b pb-4 text-blue-600">
-                  <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center"><Icon name="plus" size={20} /></div>
-                  <h3 className="font-bold text-lg">2. 新增行事事項</h3>
-                </div>
-                <form onSubmit={handleAddEvent} className="space-y-5">
+              <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col space-y-5 h-full text-blue-600">
+                <div className="flex items-center gap-3 border-b pb-4"><div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center"><Icon name="plus" size={20} /></div><h3 className="font-bold text-lg">2. 新增行事事項</h3></div>
+                <form onSubmit={handleAddEvent} className="space-y-5 text-black">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">日期</label><input type="date" className="w-full p-2.5 border rounded-lg bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-blue-100" value={newEvent.startDate} onChange={e => setNewEvent({ ...newEvent, startDate: e.target.value, endDate: e.target.value })} /></div>
-                    <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">至日期 (連續多日事項)</label><input type="date" className="w-full p-2.5 border rounded-lg bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-blue-100" value={newEvent.endDate} onChange={e => setNewEvent({ ...newEvent, endDate: e.target.value })} /></div>
+                    <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">至日期 (跨日填寫)</label><input type="date" className="w-full p-2.5 border rounded-lg bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-blue-100" value={newEvent.endDate} onChange={e => setNewEvent({ ...newEvent, endDate: e.target.value })} /></div>
                   </div>
                   <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">處室分類</label><select className="w-full p-2.5 border rounded-lg bg-slate-50 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100" value={newEvent.tag} onChange={e => setNewEvent({ ...newEvent, tag: e.target.value })}><option>教務處</option><option>學務處</option><option>總務處</option><option>備註</option></select></div>
                   <div className="flex flex-col gap-3">
-                    <label className="flex items-center gap-3 cursor-pointer p-3 bg-red-50/50 rounded-xl hover:bg-red-50 transition-colors border border-red-100">
-                      <input type="checkbox" className="w-5 h-5 accent-red-600 rounded" checked={newEvent.isHoliday} onChange={e => setNewEvent({ ...newEvent, isHoliday: e.target.checked, isImportant: false })} />
-                      <span className="text-sm font-bold text-red-700">標記為放假日</span>
-                    </label>
-                    <label className="flex items-center gap-3 cursor-pointer p-3 bg-green-50/50 rounded-xl hover:bg-green-50 transition-colors border border-green-100">
-                      <input type="checkbox" className="w-5 h-5 accent-green-600 rounded" checked={newEvent.isImportant} onChange={e => setNewEvent({ ...newEvent, isImportant: e.target.checked, isHoliday: false })} />
-                      <span className="text-sm font-bold text-green-700">標記為重要事項</span>
-                    </label>
+                    <label className="flex items-center gap-3 cursor-pointer p-3 bg-red-50/50 rounded-xl border border-red-100 transition-all active:scale-[0.99]"><input type="checkbox" className="w-5 h-5 accent-red-600" checked={newEvent.isHoliday} onChange={e => setNewEvent({ ...newEvent, isHoliday: e.target.checked, isImportant: false })} /><span className="text-sm font-bold text-red-700">標記為放假日</span></label>
+                    <label className="flex items-center gap-3 cursor-pointer p-3 bg-green-50/50 rounded-xl border border-green-100 transition-all active:scale-[0.99]"><input type="checkbox" className="w-5 h-5 accent-green-600" checked={newEvent.isImportant} onChange={e => setNewEvent({ ...newEvent, isImportant: e.target.checked, isHoliday: false })} /><span className="text-sm font-bold text-green-700">標記為重要事項</span></label>
                   </div>
-                  <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">事項標題</label><input className="w-full p-3 border border-slate-200 rounded-xl font-bold bg-white focus:ring-4 focus:ring-blue-100 outline-none transition-all shadow-inner" value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="例如：開學日、第一次段考" /></div>
-                  <button className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg hover:bg-blue-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-lg"><Icon name="check" /> 加入行事清單</button>
+                  <div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1">事項標題</label><input className="w-full p-3 border border-slate-200 rounded-xl font-bold bg-white focus:ring-4 focus:ring-blue-100 outline-none shadow-inner" value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="事項名稱 (例：開學日、228連假)" /></div>
+                  <button className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-2 text-lg"><Icon name="check" /> 確認加入行事清單</button>
                 </form>
               </section>
             </div>
 
-            {/* 3. 已登錄事項清單 (底部) */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col mb-10 text-black">
               <div className="p-6 border-b bg-slate-50 flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-slate-200 rounded-lg flex items-center justify-center text-slate-600 font-bold text-xs">{events.length}</div>
-                  <h3 className="font-bold text-slate-700 text-lg">已登錄學期行事清單</h3>
-                </div>
+                <div className="flex items-center gap-3"><div className="w-8 h-8 bg-slate-200 rounded-lg flex items-center justify-center text-slate-600 font-bold text-xs">{events.length}</div><h3 className="font-bold text-slate-700 text-lg">已登錄學期行事完整清單</h3></div>
                 <div className="flex items-center gap-3">
                   <input type="file" className="hidden" ref={fileInputRef} accept=".json" onChange={handleImport} />
-                  <button onClick={() => fileInputRef.current.click()} className="px-4 py-2 border rounded-lg text-sm font-bold hover:bg-white flex items-center gap-2 transition-all"><Icon name="upload" size={14} /> 匯入備份</button>
-                  <span className="text-[11px] text-slate-400 font-normal italic">變更後同步至雲端</span>
+                  <button onClick={() => fileInputRef.current.click()} className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-bold hover:bg-white flex items-center gap-2 transition-all shadow-sm"><Icon name="upload" size={14} /> 匯入備份 (JSON)</button>
                 </div>
               </div>
               <div className="divide-y max-h-[600px] overflow-y-auto custom-scroll">
                 {events.sort((a, b) => a.startDate.localeCompare(b.startDate)).map(e => (
                   <div key={e.id} className={`p-4 sm:px-8 flex flex-wrap justify-between items-center hover:bg-slate-50 transition-colors group ${e.isImportant ? 'bg-green-50/20' : ''}`}>
                     <div className="flex flex-wrap gap-4 items-center">
-                      <div className="flex flex-col">
-                        <span className="text-[11px] font-mono text-slate-400 font-bold">{e.startDate}</span>
-                        {e.startDate !== e.endDate && <span className="text-[9px] text-blue-400 font-bold">~ {e.endDate}</span>}
-                      </div>
+                      <div className="flex flex-col w-32 font-bold"><span className="text-[11px] font-mono text-slate-400">{e.startDate}</span>{e.startDate !== e.endDate && <span className="text-[9px] text-blue-400">至 {e.endDate}</span>}</div>
                       <span className={`text-[10px] px-3 py-1 rounded-full border font-bold ${e.isImportant ? 'text-green-600 border-green-200 bg-green-50' : (e.isHoliday ? 'text-red-600 border-red-200 bg-red-50' : 'text-slate-500 bg-white shadow-sm')}`}>{e.tag}</span>
-                      <span className={`font-bold text-base ${e.isImportant ? 'text-green-700' : (isWeekendDay(e.startDate) ? 'text-red-500' : 'text-slate-700')}`}>
+                      <span className={`font-bold text-base ${e.isHoliday ? 'text-red-500' : (e.isImportant ? 'text-green-700' : (isWeekendDay(e.startDate) ? 'text-red-500' : 'text-slate-700'))}`}>
                         {e.isImportant && '★ '}{e.title}
                       </span>
                     </div>
-                    <button onClick={() => handleDeleteEvent(e.id)} className="p-2.5 text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-full transition-all opacity-0 group-hover:opacity-100"><Icon name="trash-2" size={20} /></button>
+                    <button onClick={() => handleDeleteEvent(e.id)} className="p-3 text-red-500 hover:bg-red-50 rounded-full transition-all flex items-center justify-center shadow-sm" title="刪除事項"><Icon name="trash-2" size={20} /></button>
                   </div>
                 ))}
-                {events.length === 0 && (
-                  <div className="p-32 text-center text-slate-300 flex flex-col items-center">
-                    <Icon name="calendar-x" size={48} className="mb-4 opacity-30" />
-                    <p className="text-lg">目前尚無行事項目，請使用上方表單新增</p>
-                  </div>
-                )}
+                {events.length === 0 && <div className="p-32 text-center text-slate-300">尚未登錄事項，請透過上方表單新增或由 JSON 匯入</div>}
               </div>
             </div>
           </main>
 
-          {/* PNG 預覽彈窗 (月曆更大版) */}
+          {/* PNG 預覽 */}
           {showImagePreview && (
             <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
-              <div className="bg-white w-full max-w-6xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden text-black text-black">
-                <div className="p-6 border-b flex justify-between bg-blue-50 font-bold items-center">
-                  <span className="flex items-center gap-3 text-blue-700 text-lg font-bold"><Icon name="image" size={24} /> PNG 月曆圖檔預覽 (全學期)</span>
-                  <button onClick={() => setShowImagePreview(false)} className="hover:bg-red-100 hover:text-red-600 rounded-full p-2 transition-all"><Icon name="x" size={24} /></button>
-                </div>
+              <div className="bg-white w-full max-w-6xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden text-black">
+                <div className="p-6 border-b flex justify-between bg-blue-50 font-bold items-center"><span className="flex items-center gap-3 text-blue-700 text-lg font-bold"><Icon name="image" size={24} /> PNG 月曆圖檔預覽</span><button onClick={() => setShowImagePreview(false)} className="hover:bg-red-100 p-2 rounded-full"><Icon name="x" size={24} /></button></div>
                 <div className="flex-1 overflow-y-auto p-12 bg-slate-400">
                   <div ref={posterRef} className="bg-white mx-auto p-16 w-[210mm] shadow-2xl text-black">
-                    <div className="flex justify-between items-start mb-8 border-b-4 border-black pb-6 gap-6">
-                      <h1 className="text-3xl font-bold flex-1 tracking-wider leading-tight">{fullTitle}</h1>
-                      <div className="text-sm font-bold whitespace-nowrap bg-black text-white px-3 py-1 rounded">{headerInfo.version}</div>
-                    </div>
-                    {semesterMonths.map(m => (
-                      <div key={`poster-m-${m}`} className="mb-12 page-break-inside-avoid">
-                        <CalendarGrid m={m} isMain={true} />
-                      </div>
-                    ))}
+                    <div className="flex justify-between items-start mb-8 border-b-4 border-black pb-6 gap-6"><h1 className="text-3xl font-bold flex-1 tracking-wider leading-tight">{fullTitle}</h1><div className="text-sm font-bold whitespace-nowrap bg-black text-white px-3 py-1 rounded">{headerInfo.version}</div></div>
+                    {semesterMonths.map(m => (<div key={`poster-m-${m}`} className="mb-12 page-break-inside-avoid text-black"><CalendarGrid m={m} isMain={true} /></div>))}
                   </div>
                 </div>
-                <div className="p-6 border-t bg-white flex justify-end gap-4 shadow-top">
-                  <button onClick={() => setShowImagePreview(false)} className="px-10 py-3 border-2 border-slate-200 rounded-2xl font-bold text-slate-500">返回修改</button>
-                  <button onClick={exportPNG} disabled={exporting} className="px-10 py-3 bg-blue-600 text-white rounded-2xl font-bold flex items-center gap-3 shadow-xl active:scale-95 transition-all">
-                    {exporting ? <Icon name="loader-2" className="animate-spin" /> : <Icon name="download" />} 下載圖片
-                  </button>
-                </div>
+                <div className="p-6 border-t bg-white flex justify-end gap-4 shadow-top"><button onClick={() => setShowImagePreview(false)} className="px-10 py-3 border-2 border-slate-200 rounded-2xl font-bold text-slate-500">返回</button><button onClick={exportPNG} disabled={exporting} className="px-10 py-3 bg-blue-600 text-white rounded-2xl font-bold shadow-xl flex items-center gap-2 transition-all active:scale-95">{exporting ? <Icon name="loader-2" className="animate-spin" /> : <Icon name="download" />} 下載圖片</button></div>
               </div>
             </div>
           )}
 
-          {/* PDF 預覽彈窗 (日曆比例 3:9) */}
+          {/* PDF 預覽 (日曆比例 3:9) */}
           {showPreview && (
             <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white w-full max-w-5xl max-h-[95vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col text-black">
-                <div className="p-6 border-b flex justify-between bg-slate-100 font-bold text-slate-700 items-center">
-                  <span className="flex items-center gap-3 text-blue-600 text-lg font-bold"><Icon name="eye" size={24} /> PDF 報表格式預覽</span>
-                  <button onClick={() => setShowPreview(false)} className="hover:bg-red-100 hover:text-red-600 rounded-full p-2 transition-all"><Icon name="x" size={24} /></button>
-                </div>
+                <div className="p-6 border-b flex justify-between bg-slate-100 font-bold text-slate-700 items-center"><span className="flex items-center gap-3 text-blue-600 text-lg font-bold"><Icon name="eye" size={24} /> PDF 報表格式預覽</span><button onClick={() => setShowPreview(false)} className="hover:bg-red-100 hover:text-red-600 rounded-full p-2 transition-all"><Icon name="x" size={24} /></button></div>
                 <div className="flex-1 overflow-y-auto p-12 bg-slate-300">
                   <div className="bg-white mx-auto shadow-2xl p-14 w-[210mm] min-h-[297mm] flex flex-col relative text-black">
-                    <div className="flex justify-between items-start mb-12 border-b-2 border-black pb-8 gap-8">
-                      <h1 className="text-2xl font-bold leading-normal flex-1">{fullTitle}</h1>
-                      <div className="text-sm font-bold whitespace-nowrap border-2 border-black px-2 py-1">{headerInfo.version}</div>
-                    </div>
-                    <div className="space-y-12 flex-1">
-                      {semesterMonths.map(m => (
-                        <div key={`preview-m-${m}`} className="grid grid-cols-12 gap-8 items-start page-break-inside-avoid">
-                          <div className="col-span-3"><CalendarGrid m={m} isMain={false} /></div>
-                          <div className="col-span-9"><EventTable monthIdx={m} /></div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="text-center text-[10px] text-gray-400 mt-16 italic">校務管理系統自動產出報表</div>
+                    <div className="flex justify-between items-start mb-12 border-b-2 border-black pb-8 gap-8"><h1 className="text-2xl font-bold leading-normal flex-1 tracking-widest">{fullTitle}</h1><div className="text-sm font-bold whitespace-nowrap border-2 border-black px-2 py-1">{headerInfo.version}</div></div>
+                    <div className="space-y-12 flex-1">{semesterMonths.map(m => (<div key={`preview-m-${m}`} className="grid grid-cols-12 gap-8 items-start page-break-inside-avoid"><div className="col-span-3 text-black"><CalendarGrid m={m} isMain={false} /></div><div className="col-span-9 text-black"><EventTable monthIdx={m} /></div></div>))}</div>
                   </div>
                 </div>
-                <div className="p-6 border-t bg-white flex justify-end gap-4 font-bold shadow-top">
-                  <button onClick={() => setShowPreview(false)} className="px-10 py-3 border-2 border-slate-200 rounded-2xl text-slate-500">返回修改資料</button>
-                  <button onClick={exportPDF} className="px-10 py-3 bg-blue-600 text-white rounded-2xl shadow-xl active:scale-95 transition-all flex items-center gap-3 font-bold"><Icon name="printer" size={20} /> 確認列印</button>
-                </div>
+                <div className="p-6 border-t bg-white flex justify-end gap-4 font-bold shadow-top"><button onClick={() => setShowPreview(false)} className="px-10 py-3 border-2 border-slate-200 rounded-2xl text-slate-500 hover:bg-slate-50">返回編輯</button><button onClick={exportPDF} className="px-10 py-3 bg-blue-600 text-white rounded-2xl shadow-xl font-bold flex items-center gap-3 active:scale-95 transition-all"><Icon name="printer" size={20} /> 確認列印 / 存檔</button></div>
               </div>
             </div>
           )}
 
-          {/* 列印隱藏區 (比例同步為 3:9) */}
+          {/* 列印專用隱藏區 */}
           <div id="print-area" className="hidden print:block bg-white text-black p-0">
             <div className="mx-12 pt-14 text-black">
-              <div className="flex justify-between items-start mb-12 border-b-2 border-black pb-8 gap-10 text-black">
-                <h1 className="text-2xl font-bold leading-tight flex-1">{fullTitle}</h1>
-                <div className="text-sm font-bold whitespace-nowrap border-2 border-black px-2 py-1">{headerInfo.version}</div>
-              </div>
-              <div className="space-y-12 text-black">
-                {semesterMonths.map(m => (
-                  <div key={`p-m-${m}`} className="grid grid-cols-12 gap-10 items-start page-break-inside-avoid">
-                    <div className="col-span-3"><CalendarGrid m={m} isMain={false} /></div>
-                    <div className="col-span-9"><EventTable monthIdx={m} /></div>
-                  </div>
-                ))}
-              </div>
+              <div className="flex justify-between items-start mb-12 border-b-2 border-black pb-8 gap-10 text-black"><h1 className="text-2xl font-bold leading-tight flex-1 tracking-widest">{fullTitle}</h1><div className="text-sm font-bold border-2 border-black px-2 py-1">{headerInfo.version}</div></div>
+              <div className="space-y-12 text-black">{semesterMonths.map(m => (
+                <div key={`p-m-${m}`} className="grid grid-cols-12 gap-10 items-start page-break-inside-avoid text-black">
+                  <div className="col-span-3 text-black"><CalendarGrid m={m} isMain={false} /></div>
+                  <div className="col-span-9 text-black"><EventTable monthIdx={m} /></div>
+                </div>
+              ))}</div>
             </div>
           </div>
         </div>
