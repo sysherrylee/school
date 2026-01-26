@@ -42,7 +42,6 @@
         margin: 10mm;
       }
 
-      /* PDF 分頁高度控制，確保不被印表機切到 */
       .page-break-month {
         page-break-after: always;
         break-after: page;
@@ -127,6 +126,13 @@
       return new Date(y, m - 1, d);
     };
 
+    const toLocalDateStr = (date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+
     const formatDateToShort = (dateStr) => {
       if (!dateStr) return "";
       const d = parseDate(dateStr);
@@ -176,7 +182,7 @@
       );
     };
 
-    const CalendarGrid = ({ y, m, events, headerInfo, weekMap, isMain = false, hideAttendance = false, isSuperCompact = false }) => {
+    const CalendarGrid = ({ y, m, events, headerInfo, weekMap = {}, isMain = false, hideAttendance = false, isSuperCompact = false }) => {
       const firstDay = new Date(y, m, 1).getDay();
       const days = new Date(y, m + 1, 0).getDate();
       const rows = Math.ceil((firstDay + days) / 7);
@@ -200,20 +206,24 @@
       const getWeekNumber = (row) => {
         const rowSunday = new Date(y, m, 1);
         rowSunday.setDate(1 - rowSunday.getDay() + row * 7);
-        const sunStr = rowSunday.toISOString().split('T')[0];
-        return weekMap[sunStr] || "";
+        const sunStr = toLocalDateStr(rowSunday);
+        return (weekMap && weekMap[sunStr]) ? weekMap[sunStr] : "";
       };
 
       return (
         <div className={`border border-black rounded bg-white text-black ${isMain ? 'p-4' : 'p-0.5'}`}>
-          <div className={`font-bold text-center bg-white border-b border-black mb-0.5 ${isMain ? 'text-xl py-3' : (isSuperCompact ? 'text-[8px] py-0' : 'text-[9px] py-0.5')}`}>{m + 1}月</div>
+          {/* 月份標題恢復淺灰色底 - 加深 */}
+          <div className={`font-bold text-center bg-gray-200 border-b border-black mb-0.5 ${isMain ? 'text-xl py-3' : (isSuperCompact ? 'text-[8px] py-0' : 'text-[9px] py-0.5')}`}>{m + 1}月</div>
           <div className={`grid grid-cols-8 text-center font-bold border-b border-black mb-0.5 ${isMain ? 'text-base' : (isSuperCompact ? 'text-[5px]' : 'text-[6px]')}`}>
-            <div className="text-blue-600">週</div><div className="text-red-600">日</div>{['一', '二', '三', '四', '五'].map(d => <div key={d}>{d}</div>)}<div className="text-red-600">六</div>
+            {/* 週數標題恢復藍色底 - 加深 */}
+            <div className="text-blue-700 bg-blue-100">週</div>
+            <div className="text-red-600">日</div>{['一', '二', '三', '四', '五'].map(d => <div key={d}>{d}</div>)}<div className="text-red-600">六</div>
           </div>
-          <div className="grid grid-cols-8 gap-px bg-gray-300 border border-black">
+          <div className="grid grid-cols-8 gap-px bg-gray-400 border border-black">
             {[...Array(rows)].map((_, r) => (
               <Fragment key={`m-${m}-r-${r}`}>
-                <div className={`bg-white flex items-center justify-center font-bold border-r border-gray-300 ${cellHeight} ${isMain ? 'text-sm' : (isSuperCompact ? 'text-[6px]' : 'text-[7px]')}`}>
+                {/* 週數數值恢復藍色底 - 加深 */}
+                <div className={`bg-blue-100 flex items-center justify-center font-bold border-r border-gray-300 ${cellHeight} ${isMain ? 'text-sm' : (isSuperCompact ? 'text-[6px]' : 'text-[7px]')}`}>
                   {getWeekNumber(r)}
                 </div>
                 {[...Array(7)].map((_, c) => {
@@ -221,17 +231,27 @@
                   const isValid = dNum > 0 && dNum <= days;
                   const dStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
                   const dayEvents = events.filter(e => !e.isMonthOnly && isDateInRange(dStr, e.startDate, e.endDate));
-                  const isHoliday = dayEvents.some(e => e.isHoliday), isImportant = dayEvents.some(e => e.isImportant);
+                  const isHoliday = dayEvents.some(e => e.isHoliday);
+                  const isImportant = dayEvents.some(e => e.isImportant);
                   const isSatSun = c === 0 || c === 6;
-                  let text = isSatSun ? "text-red-600 font-bold" : "text-black";
-                  if (isImportant) text = "text-green-800 font-bold";
-                  else if (isHoliday) text = "text-red-600 font-bold";
+
+                  // 恢復強化後的塗色背景與顏色標示
+                  let bgClass = "bg-white";
+                  let textClass = isSatSun ? "text-red-600 font-bold" : "text-black";
+
+                  if (isHoliday) {
+                    bgClass = "bg-red-100";
+                    textClass = "text-red-700 font-bold";
+                  } else if (isImportant) {
+                    bgClass = "bg-green-100";
+                    textClass = "text-green-800 font-bold";
+                  }
 
                   return (
-                    <div key={`m-${m}-r-${r}-c-${c}`} className={`bg-white ${text} flex flex-col items-center justify-start border-r border-b border-gray-100 last:border-r-0 ${cellHeight} p-0.5`}>
+                    <div key={`m-${m}-r-${r}-c-${c}`} className={`${bgClass} ${textClass} flex flex-col items-center justify-start border-r border-b border-gray-100 last:border-r-0 ${cellHeight} p-0.5`}>
                       <span className={`${isMain ? 'text-lg' : (isSuperCompact ? 'text-[7px]' : 'text-[8px]')} font-bold`}>{isValid ? dNum : ''}</span>
                       {isMain && isValid && dayEvents.map(e => (
-                        <div key={e.id} className={`w-full truncate text-[10px] mt-1 px-1 rounded shadow-sm ${e.isImportant ? 'bg-green-600 text-white font-bold' : (e.isHoliday ? 'bg-red-50 text-red-700 font-bold' : 'bg-white/70 text-slate-700')}`}>
+                        <div key={e.id} className={`w-full truncate text-[10px] mt-1 px-1 rounded shadow-sm ${e.isImportant ? 'bg-green-600 text-white font-bold' : (e.isHoliday ? 'bg-red-600 text-white font-bold' : 'bg-white/80 text-slate-700')}`}>
                           {e.title}
                         </div>
                       ))}
@@ -242,7 +262,7 @@
             ))}
           </div>
           {!hideAttendance && (
-            <div className={`text-center font-bold text-blue-700 mt-1 border-t border-black pt-0.5 ${isMain ? 'text-sm' : 'text-[7px]'}`}>學生出席天數: {calculateAttendance()}天</div>
+            <div className={`text-center font-bold text-blue-800 mt-1 border-t border-black pt-0.5 ${isMain ? 'text-sm' : 'text-[7px]'}`}>學生出席天數: {calculateAttendance()}天</div>
           )}
         </div>
       );
@@ -264,7 +284,7 @@
 
       return (
         <table className="w-full border-collapse border border-black text-[11px] text-black">
-          <thead><tr className="bg-gray-100 font-bold text-black">{cols.map(c => <th key={c} className="border border-black p-1.5 w-1/4 text-center">{c}</th>)}</tr></thead>
+          <thead><tr className="bg-gray-200 font-bold text-black">{cols.map(c => <th key={c} className="border border-black p-1.5 w-1/4 text-center">{c}</th>)}</tr></thead>
           <tbody>
             <tr>
               {cols.map((dept, c) => {
@@ -273,7 +293,10 @@
                   <td key={`td-${year}-${monthIdx}-${c}`} className="border border-black p-2 align-top h-40 bg-white text-black">
                     {deptEvents.length > 0 ? deptEvents.map((e, idx) => {
                       const dateStr = e.isMonthOnly ? "(待定)" : (e.startDate === e.endDate ? formatDateToShort(e.startDate) : `${formatDateToShort(e.startDate)}~${formatDateToShort(e.endDate)}`);
-                      let textColor = e.isHoliday ? "text-red-500 font-bold" : (e.isImportant ? "text-green-700 font-bold" : "text-black");
+                      let textColor = "text-black";
+                      if (e.isHoliday) textColor = "text-red-600 font-bold";
+                      else if (e.isImportant) textColor = "text-green-700 font-bold";
+
                       return (
                         <div key={idx} className={`${textColor} mb-1 leading-tight`}>
                           <span className="inline-block bg-slate-100 rounded px-1 text-[8px] mr-1 text-slate-500 font-bold">{dateStr}</span>
@@ -308,7 +331,11 @@
           {mEvents.map((e, idx) => {
             const isWeekend = !e.isMonthOnly && isWeekendDay(e.startDate);
             const dateDisplay = e.isMonthOnly ? "(待定)" : (e.startDate === e.endDate ? formatDateToShort(e.startDate) : `${formatDateToShort(e.startDate)}-${formatDateToShort(e.endDate)}`);
-            let textColor = e.isHoliday || isWeekend ? "text-red-600" : (e.isImportant ? "text-green-700 font-bold" : "text-slate-700");
+
+            let textColor = "text-slate-700";
+            if (e.isHoliday || isWeekend) textColor = "text-red-600 font-bold";
+            else if (e.isImportant) textColor = "text-green-700 font-bold";
+            if (e.isMonthOnly) textColor = "text-blue-600 font-bold";
 
             return (
               <div key={idx} className={`${textColor} ${isSuperCompact ? 'text-[9px]' : 'text-[10px]'} flex items-start gap-2 leading-tight`}>
@@ -322,7 +349,7 @@
       );
     };
 
-    const PreviewContent = ({ mode, semesterRange, headerInfo, events, weekMap, fullTitle, simplifiedTitle }) => {
+    const PreviewContent = ({ mode, semesterRange, headerInfo, events, weekMap = {}, fullTitle, simplifiedTitle }) => {
       const isManyMonths = semesterRange.length >= 6;
       return (
         <div className={`bg-white mx-auto shadow-2xl relative text-black ${mode === 'compact' ? 'compact-one-page' : 'p-14 w-[210mm]'}`}>
@@ -394,8 +421,6 @@
       );
     };
 
-    // --- 3. 主程式 App ---
-
     const App = () => {
       const [user, setUser] = useState(null);
       const [loading, setLoading] = useState(!!config);
@@ -405,8 +430,8 @@
       const [showExportMenu, setShowExportMenu] = useState(false);
 
       const [newEvent, setNewEvent] = useState({
-        startDate: "2026-02-23",
-        endDate: "2026-02-23",
+        startDate: toLocalDateStr(new Date()),
+        endDate: toLocalDateStr(new Date()),
         title: '',
         tag: '教務處',
         isHoliday: false,
@@ -438,13 +463,13 @@
           for (let i = 1; i <= 5; i++) {
             const checkDay = new Date(currentSun);
             checkDay.setDate(currentSun.getDate() + i);
-            const dStr = checkDay.toISOString().split('T')[0];
+            const dStr = toLocalDateStr(checkDay);
             if (dStr >= headerInfo.semesterStartDate && dStr <= headerInfo.semesterEndDate) {
               const isHoliday = events.some(e => e.isHoliday && isDateInRange(dStr, e.startDate, e.endDate));
               if (!isHoliday) { hasSchoolDay = true; break; }
             }
           }
-          const sunStr = currentSun.toISOString().split('T')[0];
+          const sunStr = toLocalDateStr(currentSun);
           if (hasSchoolDay) map[sunStr] = weekCounter++;
           else map[sunStr] = "";
           currentSun.setDate(currentSun.getDate() + 7);
@@ -457,11 +482,9 @@
         const end = parseDate(headerInfo.semesterEndDate);
         const result = [];
         let current = new Date(start.getFullYear(), start.getMonth(), 1);
-        let limit = 0;
-        while (current <= end && limit < 12) {
+        while (current <= end) {
           result.push({ year: current.getFullYear(), month: current.getMonth() });
           current.setMonth(current.getMonth() + 1);
-          limit++;
         }
         return result;
       }, [headerInfo.semesterStartDate, headerInfo.semesterEndDate]);
@@ -512,17 +535,14 @@
       const handleAddEvent = async (e) => {
         e.preventDefault();
         if (!newEvent.title) return;
-
         let dataToSave = { ...newEvent };
         if (newEvent.isMonthOnly) {
           const d = parseDate(newEvent.startDate);
           const firstDay = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-          dataToSave.startDate = firstDay;
-          dataToSave.endDate = firstDay;
+          dataToSave.startDate = firstDay; dataToSave.endDate = firstDay;
         } else {
           dataToSave.endDate = newEvent.endDate < newEvent.startDate ? newEvent.startDate : newEvent.endDate;
         }
-
         if (user && db) {
           const eventsColRef = collection(db, 'artifacts', appId, 'users', user.uid, 'events');
           await addDoc(eventsColRef, dataToSave);
@@ -538,8 +558,7 @@
       };
 
       const handleImport = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
+        const file = e.target.files[0]; if (!file) return;
         const reader = new FileReader();
         reader.onload = async (event) => {
           try {
@@ -568,8 +587,7 @@
       };
 
       const triggerPrint = (mode) => {
-        setPrintMode(mode);
-        setShowPreview(false);
+        setPrintMode(mode); setShowPreview(false);
         setTimeout(() => window.print(), 300);
       };
 
@@ -579,17 +597,13 @@
         const html = `<html><head><meta charset="utf-8"></head><body><h2>${fullTitle}</h2>${table}</body></html>`;
         const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
         const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `${headerInfo.schoolName}_行事清單.doc`;
-        link.click();
+        link.href = URL.createObjectURL(blob); link.download = `${headerInfo.schoolName}_行事清單.doc`; link.click();
       };
 
       const exportJSON = () => {
         const blob = new Blob([JSON.stringify(events, null, 2)], { type: 'application/json' });
         const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `${headerInfo.schoolName}_備份.json`;
-        link.click();
+        link.href = URL.createObjectURL(blob); link.download = `${headerInfo.schoolName}_備份.json`; link.click();
       };
 
       const exportICS = () => {
@@ -597,16 +611,14 @@
         let ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//School//EN', 'METHOD:PUBLISH'];
         sortedEvents.forEach(e => {
           const start = e.startDate.replace(/-/g, '');
-          const endDateObj = parseDate(e.endDate);
-          endDateObj.setDate(endDateObj.getDate() + 1);
-          const end = endDateObj.toISOString().split('T')[0].replace(/-/g, '');
+          const endDateObj = parseDate(e.endDate); endDateObj.setDate(endDateObj.getDate() + 1);
+          const end = toLocalDateStr(endDateObj).replace(/-/g, '');
           ics.push('BEGIN:VEVENT', `DTSTART;VALUE=DATE:${start}`, `DTEND;VALUE=DATE:${end}`, `SUMMARY:${e.title}`, 'END:VEVENT');
         });
         ics.push('END:VCALENDAR');
         const link = document.createElement('a');
         link.href = URL.createObjectURL(new Blob([ics.join('\r\n')], { type: 'text/calendar' }));
-        link.download = `${headerInfo.schoolName}.ics`;
-        link.click();
+        link.download = `${headerInfo.schoolName}.ics`; link.click();
       };
 
       if (loading) return <div className="h-screen flex flex-col items-center justify-center font-bold text-slate-500"><Icon name="loader-2" className="animate-spin mb-2" size={32} />資料同步中...</div>;
@@ -629,9 +641,9 @@
                     <button onClick={() => { setPrintMode('compact'); setShowPreview(true); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-blue-50 flex items-center gap-3 font-bold transition-colors text-orange-600"><Icon name="file-text" />PDF 一頁重要行事簡曆</button>
                     <button onClick={() => { setPrintMode('calendar'); setShowPreview(true); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-blue-50 flex items-center gap-3 font-bold transition-colors text-purple-600"><Icon name="calendar-days" />PDF 月曆預覽 (一月一頁)</button>
                     <div className="border-t my-1"></div>
-                    <button onClick={() => { exportWordList(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-blue-50 flex items-center gap-3 transition-colors text-slate-600 font-bold text-black"><Icon name="list" className="text-slate-500" />下載 Word 版行事清單</button>
-                    <button onClick={() => { exportICS(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-blue-50 flex items-center gap-3 font-bold text-blue-600 transition-colors text-black"><Icon name="calendar-range" />Google 日曆匯出 (.ics)</button>
-                    <button onClick={() => { exportJSON(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-blue-50 flex items-center gap-3 transition-colors text-slate-600 font-medium text-black"><Icon name="save" className="text-amber-500" />備份資料 (JSON)</button>
+                    <button onClick={() => { exportWordList(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-blue-50 flex items-center gap-3 transition-colors text-slate-600 font-bold"><Icon name="list" className="text-slate-500" />下載 Word 版行事清單</button>
+                    <button onClick={() => { exportICS(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-blue-50 flex items-center gap-3 font-bold text-blue-600 transition-colors"><Icon name="calendar-range" />Google 日曆匯出 (.ics)</button>
+                    <button onClick={() => { exportJSON(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-blue-50 flex items-center gap-3 transition-colors text-slate-600 font-medium"><Icon name="save" className="text-amber-500" />備份資料 (JSON)</button>
                   </div>
                 )}
               </div>
@@ -644,47 +656,55 @@
           <main className="max-w-6xl mx-auto p-6 flex flex-col gap-10 print:hidden text-black">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-black">
               {/* 1. 設定區域 */}
-              <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col space-y-5 h-full">
+              <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col space-y-5 h-full text-black">
                 <div className="flex items-center gap-3 border-b pb-4"><div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500"><Icon name="settings" size={20} /></div><h3 className="font-bold text-lg">1. 學期基礎設定</h3></div>
                 <div className="space-y-4 text-sm text-black">
-                  <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-400 ml-1">學校全銜</label><input className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none text-black" value={headerInfo.schoolName} onChange={e => saveHeaderInfo({ ...headerInfo, schoolName: e.target.value })} /></div>
+                  <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-400 ml-1">學校全銜</label><input className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-100 outline-none text-black font-bold" value={headerInfo.schoolName} onChange={e => saveHeaderInfo({ ...headerInfo, schoolName: e.target.value })} /></div>
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-400 ml-1">學年度</label><input className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg w-full outline-none text-black" value={headerInfo.academicYear} onChange={e => saveHeaderInfo({ ...headerInfo, academicYear: e.target.value })} /></div>
-                    <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-400 ml-1">學期</label><input className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg w-full outline-none text-black" value={headerInfo.semester} onChange={e => saveHeaderInfo({ ...headerInfo, semester: e.target.value })} /></div>
+                    <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-400 ml-1">學年度</label><input className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg w-full outline-none text-black font-bold" value={headerInfo.academicYear} onChange={e => saveHeaderInfo({ ...headerInfo, academicYear: e.target.value })} /></div>
+                    <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-400 ml-1">學期</label><input className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg w-full outline-none text-black font-bold" value={headerInfo.semester} onChange={e => saveHeaderInfo({ ...headerInfo, semester: e.target.value })} /></div>
                   </div>
                   <div className="grid grid-cols-2 gap-4 text-xs font-bold text-slate-400">
-                    <div className="flex flex-col gap-1">學期開始日期<input type="date" className="w-full p-2.5 bg-slate-50 border border-blue-100 rounded-lg mt-1 text-black font-normal outline-none text-black" value={headerInfo.semesterStartDate} onChange={e => saveHeaderInfo({ ...headerInfo, semesterStartDate: e.target.value })} /></div>
-                    <div className="flex flex-col gap-1">學期結束日期<input type="date" className="w-full p-2.5 bg-slate-50 border border-blue-100 rounded-lg mt-1 text-black font-normal outline-none text-black" value={headerInfo.semesterEndDate} onChange={e => saveHeaderInfo({ ...headerInfo, semesterEndDate: e.target.value })} /></div>
+                    <div className="flex flex-col gap-1">學期開始日期<input type="date" className="w-full p-2.5 bg-slate-50 border border-blue-100 rounded-lg mt-1 text-black font-normal outline-none font-bold" value={headerInfo.semesterStartDate} onChange={e => saveHeaderInfo({ ...headerInfo, semesterStartDate: e.target.value })} /></div>
+                    <div className="flex flex-col gap-1">學期結束日期<input type="date" className="w-full p-2.5 bg-slate-50 border border-blue-100 rounded-lg mt-1 text-black font-normal outline-none font-bold" value={headerInfo.semesterEndDate} onChange={e => saveHeaderInfo({ ...headerInfo, semesterEndDate: e.target.value })} /></div>
                   </div>
                 </div>
               </section>
 
-              {/* 2. 新增區域 (新增日期未定功能) */}
-              <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col space-y-5 h-full">
+              {/* 2. 新增區域 */}
+              <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 flex flex-col space-y-5 h-full text-black">
                 <div className="flex items-center gap-3 border-b pb-4"><div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600"><Icon name="plus" size={20} /></div><h3 className="font-bold text-lg text-blue-600">2. 新增行事事項</h3></div>
                 <form onSubmit={handleAddEvent} className="space-y-4 text-black">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="flex flex-col gap-1">
                       <label className="text-xs font-bold text-slate-400 ml-1">{newEvent.isMonthOnly ? "選擇月份" : "開始日期"}</label>
-                      <input type="date" className="w-full p-2.5 border border-slate-200 rounded-lg bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-blue-100 text-black" value={newEvent.startDate} onChange={e => setNewEvent({ ...newEvent, startDate: e.target.value, endDate: e.target.value })} />
+                      <input type="date" className="w-full p-2.5 border border-slate-200 rounded-lg bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-blue-100 text-black font-bold" value={newEvent.startDate} onChange={e => setNewEvent({ ...newEvent, startDate: e.target.value, endDate: e.target.value })} />
                     </div>
                     {!newEvent.isMonthOnly && (
-                      <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-400 ml-1">至結束日期</label><input type="date" className="w-full p-2.5 border border-slate-200 rounded-lg bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-blue-100 text-black" value={newEvent.endDate} onChange={e => setNewEvent({ ...newEvent, endDate: e.target.value })} /></div>
+                      <div className="flex flex-col gap-1"><label className="text-xs font-bold text-slate-400 ml-1">至結束日期</label><input type="date" className="w-full p-2.5 border border-slate-200 rounded-lg bg-slate-50 text-sm outline-none focus:ring-2 focus:ring-blue-100 text-black font-bold" value={newEvent.endDate} onChange={e => setNewEvent({ ...newEvent, endDate: e.target.value })} /></div>
                     )}
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-bold text-slate-400 ml-1">事項標題</label>
-                    <input className="w-full p-3 border border-slate-300 rounded-xl font-bold bg-white focus:ring-4 focus:ring-blue-100 outline-none text-black placeholder:font-normal" value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="例如：校慶、各處室會議" />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1 col-span-2 sm:col-span-1">
+                      <label className="text-xs font-bold text-slate-400 ml-1">事項標題</label>
+                      <input className="w-full p-2.5 border border-slate-300 rounded-lg font-bold bg-white outline-none focus:ring-2 focus:ring-blue-100 text-black" value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} placeholder="例如：校慶" />
+                    </div>
+                    <div className="flex flex-col gap-1 col-span-2 sm:col-span-1">
+                      <label className="text-xs font-bold text-slate-400 ml-1">處室分類</label>
+                      <select className="w-full p-2.5 border border-slate-300 rounded-lg font-bold bg-slate-50 outline-none focus:ring-2 focus:ring-blue-100 text-black" value={newEvent.tag} onChange={e => setNewEvent({ ...newEvent, tag: e.target.value })}>
+                        <option>教務處</option><option>學務處</option><option>總務處</option><option>備註</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-2 pt-1">
-                    <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-slate-50 rounded-lg transition-colors border border-slate-100">
+                    <label className="flex items-center gap-3 cursor-pointer p-3 bg-blue-50 rounded-xl border border-blue-100 text-sm font-bold text-blue-700 hover:bg-blue-100 transition-colors">
                       <input type="checkbox" className="w-5 h-5 accent-blue-600" checked={newEvent.isMonthOnly} onChange={e => setNewEvent({ ...newEvent, isMonthOnly: e.target.checked })} />
-                      <span className="text-sm font-bold text-blue-700">僅限月份 (日期未定，標記為待定)</span>
+                      <span>僅限月份 (日期未定，標記為待定)</span>
                     </label>
-                    <label className="flex items-center gap-3 cursor-pointer p-2 bg-red-50/50 rounded-lg border border-red-100 text-sm font-bold text-red-700"><input type="checkbox" className="w-5 h-5 accent-red-600" checked={newEvent.isHoliday} onChange={e => setNewEvent({ ...newEvent, isHoliday: e.target.checked, isImportant: false })} /><span>標記為放假日 (計算出席天數會扣除)</span></label>
-                    <label className="flex items-center gap-3 cursor-pointer p-2 bg-green-50/50 rounded-lg border border-green-100 text-sm font-bold text-green-700"><input type="checkbox" className="w-5 h-5 accent-green-600" checked={newEvent.isImportant} onChange={e => setNewEvent({ ...newEvent, isImportant: e.target.checked, isHoliday: false })} /><span>標記為重要事項</span></label>
+                    <label className="flex items-center gap-3 cursor-pointer p-3 bg-red-50 rounded-xl border border-red-100 text-sm font-bold text-red-700 hover:bg-red-100 transition-colors"><input type="checkbox" className="w-5 h-5 accent-red-600 text-black" checked={newEvent.isHoliday} onChange={e => setNewEvent({ ...newEvent, isHoliday: e.target.checked, isImportant: false })} /><span>標記為放假日 (計算出席天數會扣除)</span></label>
+                    <label className="flex items-center gap-3 cursor-pointer p-3 bg-green-50 rounded-xl border border-green-100 text-sm font-bold text-green-700 hover:bg-green-100 transition-colors"><input type="checkbox" className="w-5 h-5 accent-green-600 text-black" checked={newEvent.isImportant} onChange={e => setNewEvent({ ...newEvent, isImportant: e.target.checked, isHoliday: false })} /><span>標記為重要事項</span></label>
                   </div>
 
                   <button className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-2 text-lg">確認加入行事清單</button>
@@ -694,21 +714,21 @@
 
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col mb-10 text-black">
               <div className="p-6 border-b bg-slate-50 flex justify-between items-center text-black">
-                <div className="flex items-center gap-3 text-black"><div className="w-8 h-8 bg-slate-200 rounded-lg flex items-center justify-center text-slate-600 font-bold text-xs text-black">{events.length}</div><h3 className="font-bold text-slate-700 text-lg text-black">已登錄學期行事完整清單</h3></div>
+                <div className="flex items-center gap-3 text-black"><div className="w-8 h-8 bg-slate-200 rounded-lg flex items-center justify-center text-slate-600 font-bold text-xs">{events.length}</div><h3 className="font-bold text-slate-700 text-lg">已登錄學期行事完整清單</h3></div>
                 <div className="flex items-center gap-3">
-                  <input type="file" className="hidden" ref={fileInputRef} accept=".json" onChange={handleImport} /><button onClick={() => fileInputRef.current.click()} className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-bold hover:bg-white flex items-center gap-2 transition-all shadow-sm text-black"><Icon name="upload" size={14} /> 匯入備份</button>
+                  <input type="file" className="hidden" ref={fileInputRef} accept=".json" onChange={handleImport} /><button onClick={() => fileInputRef.current.click()} className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-bold hover:bg-white flex items-center gap-2 transition-all shadow-sm"><Icon name="upload" size={14} /> 匯入備份</button>
                 </div>
               </div>
               <div className="divide-y max-h-[600px] overflow-y-auto custom-scroll text-black">
                 {events.sort((a, b) => a.startDate.localeCompare(b.startDate)).map(e => (
                   <div key={e.id} className={`p-4 sm:px-8 flex flex-wrap justify-between items-center hover:bg-slate-50 transition-colors group ${e.isImportant ? 'bg-green-50/20' : ''}`}>
-                    <div className="flex flex-wrap gap-4 items-center text-black">
-                      <div className="flex flex-col w-32 font-bold text-black">
+                    <div className="flex flex-wrap gap-4 items-center">
+                      <div className="flex flex-col w-32 font-bold">
                         {e.isMonthOnly ? (
                           <span className="text-[11px] font-bold text-blue-500">待定 ({e.startDate.substring(0, 7)})</span>
                         ) : (
                           <Fragment>
-                            <span className="text-[11px] font-mono text-slate-400 text-black">{e.startDate}</span>
+                            <span className="text-[11px] font-mono text-slate-400">{e.startDate}</span>
                             {e.startDate !== e.endDate && <span className="text-[9px] text-blue-400">至 {e.endDate}</span>}
                           </Fragment>
                         )}
@@ -718,7 +738,7 @@
                         {e.title}
                       </span>
                     </div>
-                    <button onClick={() => handleDeleteEvent(e.id)} className="p-3 text-red-500 hover:bg-red-50 rounded-full transition-all opacity-0 group-hover:opacity-100 flex items-center justify-center shadow-sm text-red-500"><Icon name="trash-2" size={20} /></button>
+                    <button onClick={() => handleDeleteEvent(e.id)} className="p-3 text-red-500 hover:bg-red-50 rounded-full transition-all opacity-0 group-hover:opacity-100 flex items-center justify-center shadow-sm"><Icon name="trash-2" size={20} /></button>
                   </div>
                 ))}
               </div>
@@ -728,36 +748,36 @@
           {showPreview && (
             <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
               <div className="bg-white w-full max-w-5xl max-h-[95vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col text-black">
-                <div className="p-6 border-b flex justify-between bg-slate-100 font-bold text-slate-700 items-center text-black">
-                  <span className="flex items-center gap-3 text-blue-600 text-lg font-bold text-black"><Icon name="eye" size={24} /> PDF 預覽：{printMode === 'compact' ? '一頁重要行事簡曆' : (printMode === 'calendar' ? '月曆預覽' : '行政報表')}</span>
-                  <button onClick={() => setShowPreview(false)} className="hover:bg-red-100 hover:text-red-600 rounded-full p-2 transition-all text-black"><Icon name="x" size={24} /></button>
+                <div className="p-6 border-b flex justify-between bg-slate-100 font-bold text-slate-700 items-center">
+                  <span className="flex items-center gap-3 text-blue-600 text-lg font-bold"><Icon name="eye" size={24} /> PDF 預覽：{printMode === 'compact' ? '一頁重要行事簡曆' : (printMode === 'calendar' ? '月曆預覽' : '行政報表')}</span>
+                  <button onClick={() => setShowPreview(false)} className="hover:bg-red-100 hover:text-red-600 rounded-full p-2 transition-all"><Icon name="x" size={24} /></button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-12 bg-slate-300 text-black">
-                  <div className="flex flex-col gap-10 items-center text-black">
+                <div className="flex-1 overflow-y-auto p-12 bg-slate-300">
+                  <div className="flex flex-col gap-10 items-center">
                     <PreviewContent mode={printMode} semesterRange={semesterRange} headerInfo={headerInfo} events={events} weekMap={weekMap} fullTitle={fullTitle} simplifiedTitle={simplifiedTitle} />
                   </div>
                 </div>
-                <div className="p-6 border-t bg-white flex justify-end gap-4 font-bold shadow-top text-black">
-                  <button onClick={() => setShowPreview(false)} className="px-10 py-3 border-2 border-slate-200 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 text-black">返回編輯</button>
-                  <button onClick={() => triggerPrint(printMode)} className="px-10 py-3 bg-blue-600 text-white rounded-2xl shadow-xl hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-3 font-bold text-white"><Icon name="printer" size={20} /> 確認列印 / 下載 PDF</button>
+                <div className="p-6 border-t bg-white flex justify-end gap-4 font-bold shadow-top">
+                  <button onClick={() => setShowPreview(false)} className="px-10 py-3 border-2 border-slate-200 rounded-2xl font-bold text-slate-500 hover:bg-slate-50">返回編輯</button>
+                  <button onClick={() => triggerPrint(printMode)} className="px-10 py-3 bg-blue-600 text-white rounded-2xl shadow-xl hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-3 font-bold"><Icon name="printer" size={20} /> 確認列印 / 下載 PDF</button>
                 </div>
               </div>
             </div>
           )}
 
-          <div id="print-area" className="hidden print:block bg-white text-black p-0 text-black">
+          <div id="print-area" className="hidden print:block bg-white text-black p-0">
             {printMode === 'compact' ? (
-              <div className="compact-one-page text-black">
+              <div className="compact-one-page">
                 <PreviewContent mode="compact" semesterRange={semesterRange} headerInfo={headerInfo} events={events} weekMap={weekMap} fullTitle={fullTitle} simplifiedTitle={simplifiedTitle} />
               </div>
             ) : printMode === 'calendar' ? (
               semesterRange.map((item, idx) => (
-                <div key={`calendar-${idx}`} className="page-break-month text-black">
+                <div key={`calendar-${idx}`} className="page-break-month">
                   <PreviewContent mode="calendar" semesterRange={[item]} headerInfo={headerInfo} events={events} weekMap={weekMap} fullTitle={fullTitle} simplifiedTitle={simplifiedTitle} />
                 </div>
               ))
             ) : (
-              <div className="report-container text-black">
+              <div className="report-container">
                 <PreviewContent mode="report" semesterRange={semesterRange} headerInfo={headerInfo} events={events} weekMap={weekMap} fullTitle={fullTitle} simplifiedTitle={simplifiedTitle} />
               </div>
             )}
