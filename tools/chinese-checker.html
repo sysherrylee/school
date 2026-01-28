@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>現代中國跳棋 - 進階版</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background-color: #f8fafc;
+      touch-action: manipulation;
+      user-select: none;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    canvas {
+      max-width: 100%;
+      height: auto;
+      cursor: pointer;
+      filter: drop-shadow(0 10px 15px rgba(0, 0, 0, 0.05));
+    }
+
+    .player-card {
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .active-player {
+      transform: translateX(10px);
+      box-shadow: -4px 0 0 0 currentColor;
+    }
+
+    @keyframes pulse-ring {
+      0% {
+        transform: scale(0.8);
+        opacity: 0.5;
+      }
+
+      100% {
+        transform: scale(1.2);
+        opacity: 0;
+      }
+    }
+
+    .jump-hint {
+      position: relative;
+    }
+
+    .jump-hint::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border: 2px solid currentColor;
+      border-radius: 9999px;
+      animation: pulse-ring 1.5s infinite;
+    }
+  </style>
+</head>
+
+<body class="flex flex-col items-center justify-center min-h-screen p-4 md:p-8">
+
+  <!-- 主選單介面 -->
+  <div id="setup-screen"
+    class="bg-white p-10 rounded-[2.5rem] shadow-2xl text-center max-w-sm w-full border border-gray-100">
+    <div class="mb-8 relative inline-block">
+      <div class="w-20 h-20 bg-indigo-600 rounded-3xl rotate-12 flex items-center justify-center shadow-xl">
+        <span class="text-white text-4xl font-black -rotate-12">棋</span>
+      </div>
+      <div class="absolute -bottom-2 -right-2 w-8 h-8 bg-yellow-400 rounded-full border-4 border-white"></div>
+    </div>
+    <h1 class="text-3xl font-black mb-2 text-slate-800 tracking-tight">中國跳棋</h1>
+    <p class="text-slate-400 mb-10 font-medium">選擇玩家人數開啟新對局</p>
+
+    <div class="space-y-4">
+      <button onclick="startGame(2)"
+        class="w-full group bg-slate-50 hover:bg-indigo-600 hover:text-white text-slate-700 font-bold py-5 px-8 rounded-2xl transition-all flex items-center justify-between shadow-sm">
+        <span class="text-lg">2 人對戰</span>
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 opacity-0 group-hover:opacity-100 transition-all"
+          fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+        </svg>
+      </button>
+      <button onclick="startGame(3)"
+        class="w-full group bg-slate-50 hover:bg-emerald-600 hover:text-white text-slate-700 font-bold py-5 px-8 rounded-2xl transition-all flex items-center justify-between shadow-sm">
+        <span class="text-lg">3 人對戰</span>
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 opacity-0 group-hover:opacity-100 transition-all"
+          fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- 遊戲主介面 -->
+  <div id="game-screen" class="hidden w-full max-w-6xl">
+    <div class="flex flex-col xl:flex-row gap-10 items-center xl:items-start justify-center">
+
+      <!-- 狀態欄 -->
+      <div class="w-full xl:w-80 order-2 xl:order-1">
+        <div class="bg-white p-8 rounded-[2rem] shadow-xl border border-gray-100 relative overflow-hidden">
+          <div class="absolute top-0 right-0 p-4">
+            <button onclick="resetGame()" class="text-slate-300 hover:text-rose-500 transition-colors" title="回到選單">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+            </button>
+          </div>
+
+          <h2 class="text-sm font-black text-slate-400 uppercase tracking-widest mb-6">當前回合</h2>
+
+          <div id="player-list" class="space-y-4 mb-8">
+            <!-- 動態玩家列表 -->
+          </div>
+
+          <div id="action-area" class="space-y-3">
+            <button id="end-jump-btn" onclick="endTurnManually()"
+              class="hidden w-full bg-slate-900 text-white py-4 rounded-xl font-black shadow-lg hover:bg-black transition-all transform hover:-translate-y-1 active:translate-y-0 flex items-center justify-center gap-2">
+              <span>結束本回合</span>
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z"
+                  clip-rule="evenodd" />
+              </svg>
+            </button>
+
+            <div id="status-msg"
+              class="text-center text-xs font-bold py-2 text-indigo-500 bg-indigo-50 rounded-lg opacity-0 transition-all">
+              請移動棋子
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 棋盤區 -->
+      <div class="relative order-1 xl:order-2">
+        <div class="bg-white p-6 md:p-10 rounded-[3rem] shadow-2xl border border-gray-50">
+          <canvas id="checkerCanvas" width="600" height="600"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 獲勝模態視窗 -->
+  <div id="win-modal"
+    class="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex items-center justify-center hidden z-50 p-6">
+    <div class="bg-white p-12 rounded-[3rem] text-center shadow-2xl max-w-sm w-full border border-gray-100">
+      <div
+        class="w-24 h-24 bg-yellow-100 text-yellow-500 rounded-full flex items-center justify-center text-5xl mx-auto mb-6">
+        🏆</div>
+      <h2 class="text-3xl font-black mb-2 text-slate-800">登頂成功！</h2>
+      <p id="winner-text" class="text-xl font-bold mb-1 text-indigo-600">紅隊 贏得勝利</p>
+      <p id="winner-stats" class="text-sm text-slate-400 mb-10 font-medium tracking-wide">總共使用了 42 步</p>
+      <button onclick="resetGame()"
+        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-5 rounded-2xl font-black transition-all shadow-xl shadow-indigo-100">
+        回到主選單
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('checkerCanvas');
+    const ctx = canvas.getContext('2d');
+    const setupScreen = document.getElementById('setup-screen');
+    const gameScreen = document.getElementById('game-screen');
+    const endJumpBtn = document.getElementById('end-jump-btn');
+
+    const COLORS = {
+      EMPTY: '#f1f5f9',
+      GRID: '#e2e8f0',
+      PLAYERS: [
+        { id: 1, name: '紅隊', color: '#ef4444', startPos: 'top', targetPos: 'bottom' },
+        { id: 2, name: '綠隊', color: '#10b981', startPos: 'bottomRight', targetPos: 'topLeft' },
+        { id: 3, name: '紫隊', color: '#8b5cf6', startPos: 'bottomLeft', targetPos: 'topRight' },
+        { id: 4, name: '藍隊', color: '#3b82f6', startPos: 'bottom', targetPos: 'top' }
+      ]
+    };
+
+    let players = [];
+    let currentPlayerIdx = 0;
+    let board = [];
+    let selectedHole = null;
+    let validMoves = [];
+    let isJumpingChain = false;
+    let totalGameSteps = 0;
+
+    function initBoardLayout() {
+      board = [];
+      for (let r = -8; r <= 8; r++) {
+        for (let q = -8; q <= 8; q++) {
+          const h = -q - r;
+          if (isValidHole(q, r, h)) {
+            board.push({ q, r, h, player: null });
+          }
+        }
+      }
+    }
+
+    function isValidHole(q, r, h) {
+      const inCenter = Math.abs(q) <= 4 && Math.abs(r) <= 4 && Math.abs(h) <= 4;
+      const inTop = (r < -4) && (q >= 1 && q <= 4) && (h >= 1 && h <= 4);
+      const inBottom = (r > 4) && (q >= -4 && q <= -1) && (h >= -4 && h <= -1);
+      const inTopRight = (q > 4) && (r >= -4 && r <= -1) && (h >= -4 && h <= -1);
+      const inBottomLeft = (q < -4) && (r >= 1 && r <= 4) && (h >= 1 && h <= 4);
+      const inTopLeft = (h > 4) && (r >= -4 && r <= -1) && (q >= -4 && q <= -1);
+      const inBottomRight = (h < -4) && (r >= 1 && r <= 4) && (q >= 1 && q <= 4);
+      return inCenter || inTop || inBottom || inTopRight || inBottomLeft || inTopLeft || inBottomRight;
+    }
+
+    function getHoleType(q, r, h) {
+      if (r < -4) return 'top';
+      if (r > 4) return 'bottom';
+      if (q > 4) return 'topRight';
+      if (q < -4) return 'bottomLeft';
+      if (h > 4) return 'topLeft';
+      if (h < -4) return 'bottomRight';
+      return 'center';
+    }
+
+    function startGame(count) {
+      setupScreen.classList.add('hidden');
+      gameScreen.classList.remove('hidden');
+
+      initBoardLayout();
+      totalGameSteps = 0;
+
+      if (count === 2) {
+        players = [
+          { ...COLORS.PLAYERS[0], steps: 0 },
+          { ...COLORS.PLAYERS[3], steps: 0 }
+        ];
+      } else {
+        players = [
+          { ...COLORS.PLAYERS[0], steps: 0 },
+          { ...COLORS.PLAYERS[1], steps: 0 },
+          { ...COLORS.PLAYERS[2], steps: 0 }
+        ];
+      }
+
+      board.forEach(hole => {
+        const type = getHoleType(hole.q, hole.r, hole.h);
+        players.forEach(p => {
+          if (type === p.startPos) hole.player = p;
+        });
+      });
+
+      currentPlayerIdx = 0;
+      isJumpingChain = false;
+      updateUI();
+      draw();
+    }
+
+    function updateUI() {
+      const list = document.getElementById('player-list');
+      list.innerHTML = '';
+
+      players.forEach((p, idx) => {
+        const isActive = idx === currentPlayerIdx;
+        const div = document.createElement('div');
+        div.className = `player-card p-4 rounded-2xl border-2 flex items-center justify-between transition-all ${isActive ? 'active-player bg-slate-50 border-slate-200' : 'bg-white border-transparent opacity-40'}`;
+        div.style.color = p.color;
+
+        div.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl flex items-center justify-center ${isActive ? 'shadow-lg' : ''}" style="background-color: ${p.color}20">
+                            <div class="w-3 h-3 rounded-full" style="background-color: ${p.color}"></div>
+                        </div>
+                        <div>
+                            <div class="text-xs font-black uppercase tracking-widest opacity-60">玩家 ${idx + 1}</div>
+                            <div class="text-lg font-black leading-tight">${p.name}</div>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">步數</div>
+                        <div class="text-xl font-black">${p.steps}</div>
+                    </div>
+                `;
+        list.appendChild(div);
+      });
+
+      // 如果正在連續跳躍，顯示結束按鈕
+      if (isJumpingChain) {
+        endJumpBtn.classList.remove('hidden');
+      } else {
+        endJumpBtn.classList.add('hidden');
+      }
+    }
+
+    function showMessage(msg) {
+      const el = document.getElementById('status-msg');
+      el.innerText = msg;
+      el.classList.replace('opacity-0', 'opacity-100');
+      setTimeout(() => {
+        el.classList.replace('opacity-100', 'opacity-0');
+      }, 2500);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const size = 20;
+
+      const getPixel = (q, r) => ({
+        x: centerX + size * (Math.sqrt(3) * q + Math.sqrt(3) / 2 * r),
+        y: centerY + size * (3 / 2 * r * 1.1)
+      });
+
+      board.forEach(hole => {
+        const { x, y } = getPixel(hole.q, hole.r);
+
+        // 孔洞底色
+        ctx.beginPath();
+        ctx.arc(x, y, 12, 0, Math.PI * 2);
+        ctx.fillStyle = COLORS.EMPTY;
+        ctx.fill();
+
+        // 亮顯可移動
+        if (validMoves.some(m => m.q === hole.q && m.r === hole.r)) {
+          ctx.beginPath();
+          ctx.arc(x, y, 15, 0, Math.PI * 2);
+          ctx.strokeStyle = players[currentPlayerIdx].color;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([4, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // 棋子繪製
+        if (hole.player) {
+          ctx.shadowBlur = 4;
+          ctx.shadowColor = 'rgba(0,0,0,0.1)';
+          ctx.shadowOffsetY = 2;
+
+          ctx.beginPath();
+          ctx.arc(x, y, 10, 0, Math.PI * 2);
+          ctx.fillStyle = hole.player.color;
+          ctx.fill();
+
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetY = 0;
+
+          // 高光效果
+          ctx.beginPath();
+          ctx.arc(x - 3, y - 3, 3, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,255,255,0.4)';
+          ctx.fill();
+
+          // 選取中標記
+          if (selectedHole && selectedHole.q === hole.q && selectedHole.r === hole.r) {
+            ctx.beginPath();
+            ctx.arc(x, y, 15, 0, Math.PI * 2);
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+          }
+        }
+      });
+    }
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const size = 20;
+
+      let clickedHole = null;
+      board.forEach(hole => {
+        const x = centerX + size * (Math.sqrt(3) * hole.q + Math.sqrt(3) / 2 * hole.r);
+        const y = centerY + size * (3 / 2 * hole.r * 1.1);
+        const dist = Math.sqrt((x - clickX) ** 2 + (y - clickY) ** 2);
+        if (dist < 16) clickedHole = hole;
+      });
+
+      if (clickedHole) handleHoleClick(clickedHole);
+    });
+
+    function handleHoleClick(hole) {
+      const currPlayer = players[currentPlayerIdx];
+
+      // 1. 點擊自己的棋子
+      if (hole.player === currPlayer) {
+        if (isJumpingChain) {
+          showMessage("請完成目前的跳躍移動");
+          return;
+        }
+        selectedHole = hole;
+        calculateValidMoves(hole);
+        draw();
+        return;
+      }
+
+      // 2. 點擊目標空位
+      const move = validMoves.find(m => m.q === hole.q && m.r === hole.r);
+      if (selectedHole && move) {
+        executeMove(selectedHole, hole, move.type);
+      } else if (!isJumpingChain) {
+        selectedHole = null;
+        validMoves = [];
+        draw();
+      }
+    }
+
+    function calculateValidMoves(sourceHole, onlyJumps = false) {
+      validMoves = [];
+      const directions = [{ q: 1, r: 0 }, { q: -1, r: 0 }, { q: 0, r: 1 }, { q: 0, r: -1 }, { q: 1, r: -1 }, { q: -1, r: 1 }];
+
+      directions.forEach(dir => {
+        if (!onlyJumps) {
+          const target = findHole(sourceHole.q + dir.q, sourceHole.r + dir.r);
+          if (target && !target.player) validMoves.push({ ...target, type: 'step' });
+        }
+        const neighbor = findHole(sourceHole.q + dir.q, sourceHole.r + dir.r);
+        if (neighbor && neighbor.player) {
+          const jumpTarget = findHole(sourceHole.q + dir.q * 2, sourceHole.r + dir.r * 2);
+          if (jumpTarget && !jumpTarget.player) {
+            validMoves.push({ ...jumpTarget, type: 'jump' });
+          }
+        }
+      });
+    }
+
+    function findHole(q, r) {
+      return board.find(h => h.q === q && h.r === r);
+    }
+
+    function executeMove(from, to, type) {
+      const player = from.player;
+      from.player = null;
+      to.player = player;
+
+      if (type === 'jump') {
+        selectedHole = to;
+        calculateValidMoves(to, true);
+        if (validMoves.length > 0) {
+          isJumpingChain = true;
+          showMessage("可繼續跳躍，或點擊「結束本回合」");
+          updateUI();
+          draw();
+          return;
+        }
+      }
+
+      // 完成完整移動
+      player.steps++;
+      totalGameSteps++;
+      completeTurn();
+    }
+
+    function endTurnManually() {
+      if (isJumpingChain) {
+        players[currentPlayerIdx].steps++;
+        totalGameSteps++;
+        completeTurn();
+      }
+    }
+
+    function completeTurn() {
+      checkWin();
+      isJumpingChain = false;
+      selectedHole = null;
+      validMoves = [];
+      currentPlayerIdx = (currentPlayerIdx + 1) % players.length;
+      updateUI();
+      draw();
+    }
+
+    function checkWin() {
+      const player = players[currentPlayerIdx];
+      const targetPos = player.targetPos;
+      const targetHoles = board.filter(h => getHoleType(h.q, h.r, h.h) === targetPos);
+      const filledByPlayer = targetHoles.filter(h => h.player === player);
+
+      if (filledByPlayer.length === 10) {
+        document.getElementById('winner-text').innerText = `${player.name} 贏得了勝利！`;
+        document.getElementById('winner-stats').innerText = `總共使用了 ${player.steps} 步`;
+        document.getElementById('win-modal').classList.remove('hidden');
+      }
+    }
+
+    function resetGame() {
+      document.getElementById('win-modal').classList.add('hidden');
+      gameScreen.classList.add('hidden');
+      setupScreen.classList.remove('hidden');
+      isJumpingChain = false;
+      selectedHole = null;
+      validMoves = [];
+    }
+
+    window.onload = () => {
+      const resize = () => {
+        const containerWidth = Math.min(window.innerWidth - 60, 600);
+        canvas.style.width = containerWidth + 'px';
+        canvas.style.height = containerWidth + 'px';
+      };
+      window.addEventListener('resize', resize);
+      resize();
+    };
+  </script>
+</body>
+
+</html>
