@@ -1,726 +1,1160 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
+import React, { useState, useMemo, useRef } from 'react';
+import {
+AlertCircle, User, Plus, Trash2, Calendar,
+UserPlus, X, Check, Edit2, Settings,
+ChevronDown, Users, Save, Upload, FileText, Printer, Download,
+Eye, BarChart3, BookOpen, Clock, CheckCircle2, AlertTriangle,
+Zap, RotateCcw, BrainCircuit, Sparkles, GraduationCap, MapPin,
+Pin, Link, UserCog, LogOut, ShieldCheck, Monitor
+} from 'lucide-react';
+
+const DAYS = ['週一', '週二', '週三', '週四', '週五'];
+const PERIODS = ['第一節', '第二節', '第三節', '第四節', '午休', '第五節', '第六節', '第七節'];
+const GRADES = ['一甲', '二甲', '三甲', '四甲', '五甲', '六甲'];
+const TEACHER_TYPES = ['導師', '科任', '代課'];
+const INITIAL_SUBJECTS = ['國語', '數學', '英語', '體育', '藝術', '舞蹈', '自然', '社會', '綜合', '彈性'];
+
+// 節數上限預設值
+const INITIAL_GRADE_TARGETS = {
+'一甲': 23, '二甲': 23,
+'三甲': 29, '四甲': 29,
+'五甲': 32, '六甲': 32
+};
+
+const App = () => {
+// --- 1. 資料狀態 ---
+const [teachers, setTeachers] = useState([
+{ id: 'T1', name: '張一甲', type: '導師', homeClassId: '一甲', maxHours: 20, availability: {}, specialties: ['國語', '數學', '社會',
+'綜合'], preferredRoomId: '一甲教室' },
+{ id: 'T2', name: '王二甲', type: '導師', homeClassId: '二甲', maxHours: 20, availability: {}, specialties: ['國語', '數學', '社會',
+'綜合'], preferredRoomId: '二甲教室' },
+{ id: 'T3', name: '李三甲', type: '導師', homeClassId: '三甲', maxHours: 20, availability: {}, specialties: ['國語', '數學', '自然',
+'綜合'], preferredRoomId: '三甲教室' },
+{ id: 'T4', name: '趙四甲', type: '導師', homeClassId: '四甲', maxHours: 20, availability: {}, specialties: ['國語', '數學', '自然',
+'綜合'], preferredRoomId: '四甲教室' },
+{ id: 'T5', name: '陳五甲', type: '導師', homeClassId: '五甲', maxHours: 20, availability: {}, specialties: ['國語', '數學', '自然',
+'社會'], preferredRoomId: '五甲教室' },
+{ id: 'T6', name: '林六甲', type: '導師', homeClassId: '六甲', maxHours: 20, availability: {}, specialties: ['國語', '數學', '自然',
+'社會'], preferredRoomId: '六甲教室' },
+{ id: 'T7', name: '周科任', type: '科任', homeClassId: '', maxHours: 24, availability: {}, specialties: ['英語', '體育', '藝術'],
+preferredRoomId: '體育館' },
+{ id: 'T8', name: '孫舞蹈', type: '代課', homeClassId: '', maxHours: 12, availability: {}, specialties: ['舞蹈'],
+preferredRoomId: '舞蹈教室' },
+]);
+
+const [rooms, setRooms] = useState(['普通教室', '舞蹈教室', '電腦教室', '體育館', '一甲教室', '二甲教室', '三甲教室', '四甲教室', '五甲教室', '六甲教室']);
+const [subjects, setSubjects] = useState(INITIAL_SUBJECTS);
+const [schedule, setSchedule] = useState({});
+const [gradeTargets, setGradeTargets] = useState(INITIAL_GRADE_TARGETS);
+const [subjectAllocation, setSubjectAllocation] = useState(GRADES.reduce((acc, g) => ({ ...acc, [g]: { '國語': 6, '數學': 4,
+'英語': 2, '綜合': 2, '彈性': 2 } }), {}));
+const [fixedSlots, setFixedSlots] = useState(GRADES.reduce((acc, g) => ({ ...acc, [g]: {} }), {}));
+
+const [gradeAvailability, setGradeAvailability] = useState(() => {
+const init = {};
+GRADES.forEach(g => {
+init[g] = {};
+const isLow = g.startsWith('一') || g.startsWith('二');
+const isMid = g.startsWith('三') || g.startsWith('四');
+DAYS.forEach(d => {
+PERIODS.forEach(p => {
+if (p === '午休') return;
+const pIdx = PERIODS.indexOf(p);
+let avail = true;
+if (isLow && d !== '週二' && pIdx >= 5) avail = false;
+else if (isMid && (d === '週三' || d === '週五') && pIdx >= 5) avail = false;
+else if (d === '週三' && pIdx >= 5) avail = false;
+init[g][`${d}-${p}`] = avail;
+});
+});
+});
+return init;
+});
+
+// --- 2. UI 狀態 ---
+const [viewMode, setViewMode] = useState('class');
+const [selectedTarget, setSelectedTarget] = useState('一甲');
+const [isTeacherListCollapsed, setIsTeacherListCollapsed] = useState(false);
+const [isClassListCollapsed, setIsClassListCollapsed] = useState(false);
+const [isRoomListCollapsed, setIsRoomListCollapsed] = useState(false);
+const [showTools, setShowTools] = useState(false);
+const [showPreview, setShowPreview] = useState(false);
+const [isLoadingAI, setIsLoadingAI] = useState(false);
+const [message, setMessage] = useState(null);
+
+const [subjectModalTab, setSubjectModalTab] = useState('list');
+const [showSubjectModal, setShowSubjectModal] = useState(false);
+const [newSubjectName, setNewSubjectName] = useState('');
+const [editingSubjectIndex, setEditingSubjectIndex] = useState(null);
+
+const [templateSelectedGrade, setTemplateSelectedGrade] = useState('一甲');
+const [templateSelectedSubject, setTemplateSelectedSubject] = useState(subjects[0] || '國語');
+const [templateSelectedTeacherId, setTemplateSelectedTeacherId] = useState('');
+const [templateJointGrades, setTemplateJointGrades] = useState([]);
+
+const [showTeacherModal, setShowTeacherModal] = useState(false);
+const [editingTeacher, setEditingTeacher] = useState(null);
+const [newTeacher, setNewTeacher] = useState({ name: '', type: '導師', homeClassId: '', maxHours: 16, availability: {},
+specialties: [], preferredRoomId: '' });
+
+const [showRoomModal, setShowRoomModal] = useState(false);
+const [editingRoomIndex, setEditingRoomIndex] = useState(null);
+const [roomInputName, setRoomInputName] = useState('');
+
+const [showGradeTargetModal, setShowGradeTargetModal] = useState(false);
+const [editingGrade, setEditingGrade] = useState('');
+const [tempGradeTarget, setTempGradeTarget] = useState(0);
+
+const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, type: null, targetId: null, label: '' });
+const [showSmartModal, setShowSmartModal] = useState(false);
+const [smartConfig, setSmartConfig] = useState({ maxConsecutive: 3, allowOvertime: false });
+
+const [assigningSlot, setAssigningSlot] = useState(null);
+const [assignment, setAssignment] = useState({ teacherId: '', subject: '國語', roomId: '普通教室', targetClass: '', isJoint:
+false, jointClassIds: [] });
+
+const fileInputRef = useRef(null);
+
+// --- 3. 核心統計邏輯 (定義在 App 組件內頂部) ---
+
+const teacherStatsData = useMemo(() => {
+const stats = {};
+teachers.forEach(t => stats[t.id] = 0);
+const counted = new Set();
+Object.values(schedule).forEach(item => {
+const key = `${item.teacherId}-${item.day}-${item.period}`;
+if (stats[item.teacherId] !== undefined && !counted.has(key)) {
+stats[item.teacherId]++;
+counted.add(key);
+}
+});
+return stats;
+}, [schedule, teachers]);
+
+const classStatsData = useMemo(() => {
+const stats = {};
+GRADES.forEach(g => {
+stats[g] = { total: 0, bySubject: {} };
+subjects.forEach(s => stats[g].bySubject[s] = 0);
+});
+Object.entries(schedule).forEach(([k, v]) => {
+const c = k.split('-')[2];
+if (stats[c]) {
+stats[c].total++;
+stats[c].bySubject[v.subject] = (stats[c].bySubject[v.subject] || 0) + 1;
+}
+});
+GRADES.forEach(g => {
+const slotsForGrade = fixedSlots[g] || {};
+Object.entries(slotsForGrade).forEach(([sk, data]) => {
+if (!schedule[`${sk}-${g}`]) {
+const subName = typeof data === 'object' ? data.subject : data;
+if (stats[g] && subName) {
+stats[g].total++;
+const sStr = String(subName);
+stats[g].bySubject[sStr] = (stats[g].bySubject[sStr] || 0) + 1;
+}
+}
+});
+});
+return stats;
+}, [schedule, subjects, fixedSlots]);
+
+const allocationTotalsData = useMemo(() => {
+const totals = {};
+GRADES.forEach(g => { totals[g] = Object.values(subjectAllocation[g] || {}).reduce((a, b) => a + b, 0); });
+return totals;
+}, [subjectAllocation]);
+
+// --- 4. 功能函式 ---
+
+const showUIMessage = (text, type = 'success') => {
+setMessage({ text, type });
+setTimeout(() => setMessage(null), 3000);
+};
+
+const getTargetDisplayName = () => {
+if (viewMode === 'class') return `${selectedTarget} 班級課表`;
+if (viewMode === 'teacher') {
+const t = teachers.find(t => t.id === selectedTarget);
+return `${t ? t.name : '未知'} 老師課表`;
+}
+if (viewMode === 'room') return `${selectedTarget} 教室佔用狀況`;
+return '課表系統';
+};
+
+const backupData = () => {
+const data = { teachers, rooms, subjects, schedule, gradeTargets, subjectAllocation, fixedSlots, gradeAvailability };
+const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = `學校排課資料備份.json`;
+a.click();
+setShowTools(false);
+};
+
+const handleRestore = (e) => {
+const file = e.target.files[0];
+if (!file) return;
+const reader = new FileReader();
+reader.onload = (event) => {
+try {
+const data = JSON.parse(event.target.result);
+if (data.teachers) setTeachers(data.teachers);
+if (data.rooms) setRooms(data.rooms);
+if (data.subjects) setSubjects(data.subjects);
+if (data.schedule) setSchedule(data.schedule);
+if (data.gradeTargets) setGradeTargets(data.gradeTargets);
+if (data.subjectAllocation) setSubjectAllocation(data.subjectAllocation);
+if (data.fixedSlots) setFixedSlots(data.fixedSlots);
+if (data.gradeAvailability) setGradeAvailability(data.gradeAvailability);
+showUIMessage("資料還原成功");
+} catch (err) { showUIMessage("檔案讀取失敗", "error"); }
+};
+reader.readAsText(file);
+setShowTools(false);
+};
+
+const handleDeleteCourseAt = (day, period, c) => {
+const next = { ...schedule };
+const classesToRemove = [c.targetClass, ...(c.jointWith || [])];
+classesToRemove.forEach(g => { delete next[`${day}-${period}-${g}`]; });
+setSchedule(next);
+showUIMessage("已刪除該堂課程");
+};
+
+const getConflicts = (day, period, teacherId, roomId, className, isJoint, jointGrades = [], currentSchedule = schedule)
+=> {
+const conflicts = [];
+if (!teacherId) return conflicts;
+if (gradeAvailability[className]?.[`${day}-${period}`] === false) conflicts.push(`${className} 班在此時段已放學`);
+const t = teachers.find(teacher => teacher.id === teacherId);
+if (t?.availability?.[`${day}-${period}`] === false) conflicts.push(`教師時段限制：${t.name} 不排課`);
+const tBusy = Object.entries(currentSchedule).find(([k, v]) => { const [d, p, c] = k.split('-'); return d === day && p
+=== period && v.teacherId === teacherId && c !== className && !jointGrades.includes(c); });
+if (tBusy) conflicts.push(`教師衝突：${t?.name} 此時段已有課`);
+const rBusy = Object.entries(currentSchedule).find(([k, v]) => { const [d, p, c] = k.split('-'); return d === day && p
+=== period && v.roomId === roomId && c !== className && !jointGrades.includes(c); });
+if (rBusy) conflicts.push(`教室衝突：${roomId} 已被佔用`);
+return conflicts;
+};
+
+const handleSaveTeacherData = () => {
+if (!newTeacher.name) return;
+const data = { ...newTeacher, maxHours: parseInt(newTeacher.maxHours) || 16 };
+if (editingTeacher) setTeachers(teachers.map(t => t.id === editingTeacher.id ? { ...data, id: t.id } : t));
+else setTeachers([...teachers, { ...data, id: `T${Date.now()}` }]);
+setShowTeacherModal(false); showUIMessage("教師資料已儲存");
+};
+
+const handleSaveRoomData = () => {
+if (!roomInputName) return;
+if (editingRoomIndex !== null) {
+const oldName = rooms[editingRoomIndex];
+const nextRooms = [...rooms]; nextRooms[editingRoomIndex] = roomInputName;
+setRooms(nextRooms);
+} else { if (!rooms.includes(roomInputName)) setRooms([...rooms, roomInputName]); }
+setRoomInputName(''); setEditingRoomIndex(null); showUIMessage("教室更新完成");
+};
+
+const handleSaveSubjectData = () => {
+if (!newSubjectName) return;
+if (editingSubjectIndex !== null) {
+const next = [...subjects]; next[editingSubjectIndex] = newSubjectName;
+setSubjects(next);
+} else { if (!subjects.includes(newSubjectName)) setSubjects([...subjects, newSubjectName]); }
+setNewSubjectName(''); setEditingSubjectIndex(null); showUIMessage("科目更新完成");
+};
+
+const runSmartSchedule = () => {
+let next = { ...schedule };
+let tStats = { ...teacherStatsData };
+let success = 0;
+
+GRADES.forEach(g => {
+const availableSlots = [];
+DAYS.forEach(day => PERIODS.forEach(period => {
+if (period === '午休') return;
+if (gradeAvailability[g]?.[`${day}-${period}`] !== false && !next[`${day}-${period}-${g}`]) {
+availableSlots.push({ day, period });
+}
+}));
+availableSlots.sort(() => Math.random() - 0.5);
+
+availableSlots.forEach(s => {
+const currentTotal = Object.keys(next).filter(k => k.endsWith(`-${g}`)).length +
+Object.keys(fixedSlots[g] || {}).filter(sk => !next[`${sk}-${g}`]).length;
+if (currentTotal >= (gradeTargets[g] || 0)) return;
+
+const subPool = subjects.sort(() => Math.random() - 0.5);
+for (let sub of subPool) {
+const candidates = teachers.filter(t => {
+if (t.availability?.[`${s.day}-${s.period}`] === false) return false;
+if (getConflicts(s.day, s.period, t.id, rooms[0], g, false, [], next).length > 0) return false;
+const limit = smartConfig.allowOvertime ? (t.maxHours + 2) : t.maxHours;
+if ((tStats[t.id] || 0) >= limit) return false;
+return true;
+}).sort((a, b) => (a.homeClassId === g ? -1 : 1));
+
+if (candidates.length > 0) {
+const bestT = candidates[0];
+next[`${s.day}-${s.period}-${g}`] = { teacherId: bestT.id, subject: String(sub), roomId: rooms[0], targetClass: g, day:
+s.day, period: s.period };
+tStats[bestT.id] = (tStats[bestT.id] || 0) + 1;
+success++; break;
+}
+}
+});
+});
+setSchedule(next); setShowSmartModal(false); showUIMessage(`自動排課填滿了 ${success} 節次`);
+};
+
+const handleSaveAssignment = () => {
+const { day, period } = assigningSlot;
+const mainClass = viewMode === 'class' ? selectedTarget : assignment.targetClass;
+const allInvolved = [mainClass, ...assignment.jointClassIds];
+for (let g of allInvolved) {
+if (getConflicts(day, period, assignment.teacherId, assignment.roomId, g, assignment.isJoint, allInvolved.filter(x => x
+!== g)).length > 0) {
+showUIMessage(`班級 ${g} 衝突`, "error"); return;
+}
+}
+const next = { ...schedule };
+allInvolved.forEach(g => { next[`${day}-${period}-${g}`] = { ...assignment, targetClass: g, jointWith:
+allInvolved.filter(x => x !== g), day, period }; });
+setSchedule(next); setAssigningSlot(null);
+};
+
+const executeDeleteItemFunc = () => {
+const { type, targetId } = deleteConfirm;
+if (type === 'teacher') setTeachers(prev => prev.filter(t => t.id !== targetId));
+else if (type === 'room') setRooms(prev => prev.filter(r => r !== targetId));
+else if (type === 'subject') setSubjects(prev => prev.filter(s => s !== targetId));
+setDeleteConfirm({ isOpen: false, type: null, targetId: null, label: '' });
+};
+
+const callGeminiAI = async () => { setIsLoadingAI(true); setTimeout(() => { runSmartSchedule(); setIsLoadingAI(false);
+}, 1500); };
+const printToPDF = () => { window.print(); setShowPreview(false); };
+const exportToWord = () => {
+const content = document.getElementById('preview-table-container')?.innerHTML;
+if (!content) { showUIMessage("請先開啟預覽視窗", "error"); return; }
+const blob = new Blob(['<html>
 
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>國小排課系統 - 穩定功能版</title>
-  <!-- 載入核心庫 -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="utf-8">
+
+<body>' + content + '</body>
+
+</html>'], { type: 'application/msword' });
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a'); a.href = url; a.download = `學校課表.doc`; a.click();
+};
+
+// --- 5. 渲染 ---
+return (
+<div className="min-h-screen bg-slate-50 p-4 md:p-6 text-slate-800 font-sans">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+    {
+      ` @media print {
+        .no-print {
+          display: none !important;
+        }
 
-    body {
-      font-family: 'Noto Sans TC', sans-serif;
-      letter-spacing: -0.01em;
-      font-weight: 900;
-    }
-
-    @media print {
-      .print-hidden {
-        display: none !important;
+        .print-only {
+          display: block !important;
+        }
       }
 
-      body {
-        background: white !important;
-        padding: 0 !important;
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
       }
 
-      #timetable-container {
-        min-width: 100% !important;
-        border: none !important;
-      }
-    }
-
-    .custom-scroll::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-
-    .custom-scroll::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    .custom-scroll::-webkit-scrollbar-thumb {
-      background: #cbd5e1;
-      border-radius: 10px;
-    }
-
-    .fixed-table {
-      table-layout: fixed;
-      width: 100%;
-      min-width: 1000px;
-      border-collapse: collapse;
-    }
-
-    .fixed-table th,
-    .fixed-table td {
-      width: 16.66%;
-      text-align: center;
-      vertical-align: middle;
-      padding: 10px 4px;
-    }
-
-    .lesson-cell {
-      transition: all 0.2s ease;
-      cursor: pointer;
-      border-radius: 32px;
-    }
-
-    .lesson-cell:hover {
-      transform: translateY(-2px);
-      z-index: 10;
-      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    }
-
-    .lesson-cell:active {
-      transform: translateY(0);
-      scale: 0.98;
-    }
-
-    @keyframes pulse-red {
-      0% {
-        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 10px;
       }
 
-      70% {
-        box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+      .preview-paper {
+        width: 210mm;
+        min-height: 297mm;
+        padding: 20mm;
+        margin: auto;
+        background: white;
+        box-shadow: 0 0 15px rgba(0, 0, 0, 0.05);
       }
 
-      100% {
-        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
-      }
-    }
-
-    .overlap-warning {
-      animation: pulse-red 2s infinite;
+      `
     }
   </style>
-</head>
 
-<body class="bg-[#F1F5F9]">
-  <div id="root"></div>
-
-  <script type="text/babel">
-    const DAYS = ["週一", "週二", "週三", "週四", "週五"];
-    const TIMES = [
-      { id: 1, period: "第一節", time: "08:40-09:20" },
-      { id: 2, period: "第二節", time: "09:30-10:10" },
-      { id: 3, period: "第三節", time: "10:30-11:10" },
-      { id: 4, period: "第四節", time: "11:20-12:00" },
-      { id: 5, period: "第五節", time: "13:30-14:10" },
-      { id: 6, period: "第六節", time: "14:20-15:00" },
-      { id: 7, period: "第七節", time: "15:20-16:00" },
-    ];
-
-    // 圖示組件定義
-    const IconSchool = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>;
-    const IconBell = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>;
-    const IconEdit = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
-    const IconSave = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>;
-    const IconX = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>;
-    const IconPlus = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
-    const IconSettings = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 1 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1-2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 1 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>;
-    const IconChart = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg>;
-    const IconPrint = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" /></svg>;
-    const IconFile = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>;
-    const IconTrash = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>;
-    const IconCheck = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>;
-    const IconSync = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6" /><path d="M2 12c0-4.4 3.6-8 8-8 3.3 0 6.2 2 7.4 4.9M22 12c0 4.4-3.6 8-8 8-3.3 0-6.2-2-7.4-4.9" /></svg>;
-    const IconEraser = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" /><path d="m22 21H7" /><path d="m5 11 9 9" /></svg>;
-    const IconDownload = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>;
-    const IconUpload = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>;
-    const IconEye = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>;
-
-    const INITIAL_DATA = [
-      { className: "一年甲班", homeroomTeacher: "盧佩雯老師", schedule: { "週一": [{ s: "彈性(英語)", t: "葉佩綺老師" }, { s: "數學", t: "盧佩雯老師" }, { s: "生活(音樂)", t: "許蓓宜老師" }, { s: "國語", t: "盧佩雯老師" }, null, null, null], "週二": [{ s: "體育", t: "盧佩雯老師" }, { s: "本土語", t: "陳香蘭老師", isManualShared: true }, { s: "彈性(英語)", t: "葉佩綺老師" }, { s: "健康", t: "洪瑄妙老師" }, { s: "國語", t: "盧佩雯老師" }, { s: "國語", t: "盧佩雯老師" }, { s: "彈性(漁鄉)", t: "盧佩雯老師" }], "週三": [{ s: "數學", t: "盧佩雯老師" }, { s: "國語", t: "盧佩雯老師" }, { s: "生活", t: "盧佩雯老師" }, { s: "生活", t: "盧佩雯老師" }, null, null, null], "週四": [{ s: "生活(舞蹈)", t: "陳瓊華老師" }, { s: "數學", t: "盧佩雯老師" }, { s: "體育", t: "盧佩雯老師" }, { s: "國語", t: "盧佩雯老師" }, null, null, null], "週五": [{ s: "生活(美術)", t: "姜麗玉老師" }, { s: "數學", t: "盧佩雯老師" }, { s: "生活", t: "盧佩雯老師" }, { s: "國語", t: "盧佩雯老師" }, null, null, null] } },
-      { className: "二年甲班", homeroomTeacher: "曾瀅珈老師", schedule: { "週一": [{ s: "國語", t: "曾瀅珈老師" }, { s: "數學", t: "曾瀅珈老師" }, { s: "生活(音樂)", t: "許蓓宜老師" }, { s: "國語", t: "曾瀅珈老師" }, null, null, null], "週二": [{ s: "體育", t: "曾瀅珈老師" }, { s: "本土語", t: "陳香蘭老師", isManualShared: true }, { s: "國語", t: "曾瀅珈老師" }, { s: "數學", t: "曾瀅珈老師" }, { s: "生活", t: "曾瀅珈老師" }, { s: "國語", t: "曾瀅珈老師" }, { s: "彈性(漁鄉)", t: "曾澄珈老師" }], "週三": [{ s: "數學", t: "曾瀅珈老師" }, { s: "國語", t: "曾瀅珈老師" }, { s: "彈性(英語)", t: "葉佩綺老師" }, { s: "彈性(英語)", t: "葉佩綺老師" }, null, null, null], "週四": [{ s: "數學", t: "曾瀅珈老師" }, { s: "生活", t: "曾瀅珈老師" }, { s: "生活(舞蹈)", t: "陳瓊華老師" }, { s: "體育", t: "曾瀅珈老師" }, null, null, null], "週五": [{ s: "數學", t: "曾瀅珈老師" }, { s: "國語", t: "曾瀅珈老師" }, { s: "生活(美術)", t: "姜麗玉老師" }, { s: "健康", t: "洪瑄妙老師" }, null, null, null] } },
-      { className: "三年甲班", homeroomTeacher: "鄭永章老師", schedule: { "週一": [{ s: "創鼓團練", t: "鄭永章老師" }, { s: "數學", t: "鄭永章老師" }, { s: "國語", t: "鄭永章老師" }, { s: "自然", t: "陳香蘭老師" }, { s: "國語", t: "鄭永章老師" }, { s: "音樂", t: "許蓓宜老師" }, { s: "社會", t: "鄭永章老師" }], "週二": [{ s: "本土語言", t: "陳香蘭老師" }, { s: "數學", t: "鄭永章老師" }, { s: "國語", t: "鄭永章老師" }, { s: "國語", t: "鄭永章老師" }, { s: "數學", t: "鄭永章老師" }, null, null], "週三": [{ s: "體育", t: "謝淑君老師" }, { s: "健康", t: "洪瑄妙老師" }, { s: "社會", t: "鄭永章老師" }, { s: "綜合", t: "陳香蘭老師" }, null, null, null], "週四": [{ s: "國語", t: "鄭永章老師" }, { s: "數學", t: "鄭永章老師" }, { s: "資訊", t: "黃自正主任" }, { s: "舞蹈", t: "陳瓊華老師" }, { s: "彈性(英)", t: "謝淑君老師" }, { s: "英文", t: "葉佩綺老師" }, { s: "彈性(漁鄉)", t: "鄭永章老師" }], "週五": [{ s: "體育", t: "謝淑君老師" }, { s: "數學", t: "鄭永章老師" }, { s: "國語", t: "鄭永章老師" }, { s: "國語", t: "鄭永章老師" }, { s: "綜合", t: "陳香蘭老師" }, { s: "美術", t: "姜麗玉老師" }, { s: "自然", t: "陳香蘭老師" }] } }
-    ];
-
-    const App = () => {
-      const [data, setData] = React.useState(INITIAL_DATA);
-      const [subjectTargets, setSubjectTargets] = React.useState({
-        "一年甲班": { "國語": 6, "數學": 4, "生活": 3, "體育": 2, "彈性(英語)": 2, "本土語": 1, "彈性(漁鄉)": 1 },
-        "二年甲班": { "國語": 6, "數學": 4, "生活": 3, "體育": 2, "彈性(英語)": 2, "本土語": 1, "彈性(漁鄉)": 1 },
-        "三年甲班": { "國語": 5, "數學": 4, "社會": 3, "自然": 3, "綜合": 2, "英文": 1, "本土語言": 1 }
-      });
-      const [viewMode, setViewMode] = React.useState('class');
-      const [isEditMode, setIsEditMode] = React.useState(false);
-      const [selectedClass, setSelectedClass] = React.useState(INITIAL_DATA[0].className);
-      const [selectedTeacher, setSelectedTeacher] = React.useState(INITIAL_DATA[0].homeroomTeacher);
-      const [isGridExpanded, setIsGridExpanded] = React.useState(false);
-      const [editingCell, setEditingCell] = React.useState(null);
-      const [showConflictList, setShowConflictList] = React.useState(false);
-      const [showClassManager, setShowClassManager] = React.useState(false);
-      const [exportPreview, setExportPreview] = React.useState(null);
-      const [pendingSlot, setPendingSlot] = React.useState({ s: "", t: "", c: "", isManualShared: false });
-
-      // 訊息提示與視窗狀態
-      const [toast, setToast] = React.useState(null);
-      const [deletePending, setDeletePending] = React.useState(null);
-      const [renamePending, setRenamePending] = React.useState(null);
-      const [addPlanPending, setAddPlanPending] = React.useState(false);
-      const [newClassNameInput, setNewClassNameInput] = React.useState("");
-      const [newPlanNameInput, setNewPlanNameInput] = React.useState("");
-
-      const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
-
-      const classList = React.useMemo(() => data.map(c => c.className), [data]);
-      const teachersList = React.useMemo(() => {
-        const list = new Set();
-        data.forEach(c => {
-          list.add(c.homeroomTeacher);
-          Object.values(c.schedule).forEach(day => day.forEach(s => s && list.add(s.t)));
-        });
-        return Array.from(list).filter(Boolean).sort();
-      }, [data]);
-
-      const getOverlapInfo = React.useCallback((teacher, subject, day, timeIdx, currentClassName) => {
-        if (!teacher) return null;
-        for (const cls of data) {
-          if (cls.className === currentClassName) continue;
-          const other = cls.schedule[day]?.[timeIdx];
-          if (other && other.t === teacher) {
-            return { otherClass: cls.className, otherSubject: other.s || "未命名" };
-          }
-        }
-        return null;
-      }, [data]);
-
-      // 統計計算
-      const stats = React.useMemo(() => {
-        if (viewMode === 'class') {
-          const target = selectedClass;
-          const cls = data.find(c => c.className === target);
-          const currentCount = {};
-          if (cls) {
-            Object.values(cls.schedule).forEach(d => d.forEach(s => { if (s) currentCount[s.s] = (currentCount[s.s] || 0) + 1; }));
-          }
-          const targets = subjectTargets[target] || {};
-          return Object.entries(targets).map(([s, t]) => ({ subject: s, current: currentCount[s] || 0, target: t, type: 'class' }));
-        } else {
-          const targetT = selectedTeacher;
-          const counts = {};
-          let total = 0;
-          data.forEach(cls => {
-            Object.values(cls.schedule).forEach(day => {
-              day.forEach(slot => {
-                if (slot && slot.t === targetT) {
-                  counts[slot.s] = (counts[slot.s] || 0) + 1;
-                  total++;
-                }
-              });
-            });
-          });
-          return { items: Object.entries(counts).map(([s, c]) => ({ subject: s, current: c, type: 'teacher' })), total };
-        }
-      }, [data, selectedClass, selectedTeacher, viewMode, subjectTargets]);
-
-      const overlaps = React.useMemo(() => {
-        const list = [];
-        DAYS.forEach(day => {
-          TIMES.forEach((_, tIdx) => {
-            const teacherMap = {};
-            data.forEach(cls => {
-              const slot = cls.schedule[day]?.[tIdx];
-              if (slot && slot.t) {
-                if (teacherMap[slot.t]) {
-                  const prev = teacherMap[slot.t];
-                  list.push({
-                    teacher: slot.t, day, timeLabel: TIMES[tIdx].period,
-                    classes: [prev.className, cls.className],
-                    subjects: [prev.s, slot.s]
-                  });
-                }
-                teacherMap[slot.t] = { className: cls.className, s: slot.s };
-              }
-            });
-          });
-        });
-        return list;
-      }, [data]);
-
-      // 功能操作
-      const handleFullExport = () => {
-        const blob = new Blob([JSON.stringify({ data, subjectTargets }, null, 2)], { type: 'application/json' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `國小排課備份.json`;
-        link.click();
-        showToast("備份匯出成功");
-      };
-
-      const handleFullImport = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          try {
-            const imported = JSON.parse(event.target.result);
-            if (imported.data) setData(imported.data);
-            if (imported.subjectTargets) setSubjectTargets(imported.subjectTargets);
-            showToast("還原備份成功");
-          } catch (err) { showToast("還原失敗，請檢查檔案內容"); }
-        };
-        reader.readAsText(file);
-      };
-
-      const executeRename = () => {
-        if (!renamePending || !newClassNameInput) return;
-        const { oldName } = renamePending;
-        setData(prev => prev.map(c => c.className === oldName ? { ...c, className: newClassNameInput } : c));
-        setSubjectTargets(prev => {
-          const next = { ...prev }; next[newClassNameInput] = next[oldName]; delete next[oldName]; return next;
-        });
-        if (selectedClass === oldName) setSelectedClass(newClassNameInput);
-        showToast("更名成功");
-        setRenamePending(null);
-      };
-
-      const executeAddPlan = () => {
-        if (!newPlanNameInput.trim()) return;
-        setSubjectTargets(p => ({ ...p, [selectedClass]: { ...p[selectedClass], [newPlanNameInput.trim()]: 1 } }));
-        setAddPlanPending(false);
-        setNewPlanNameInput("");
-      };
-
-      const handleAddClass = (name) => {
-        if (!name || classList.includes(name)) return;
-        setData([...data, { className: name, homeroomTeacher: "專任教師", schedule: DAYS.reduce((acc, d) => ({ ...acc, [d]: Array(7).fill(null) }), {}) }]);
-        setSubjectTargets({ ...subjectTargets, [name]: {} });
-        showToast(`已新增：${name}`);
-      };
-
-      const executeDelete = () => {
-        if (!deletePending) return;
-        if (data.length <= 1) { showToast("無法刪除唯一的班級"); setDeletePending(null); return; }
-        const newData = data.filter(c => c.className !== deletePending);
-        setData(newData);
-        if (selectedClass === deletePending) setSelectedClass(newData[0].className);
-        setDeletePending(null);
-      };
-
-      const handleSave = () => {
-        const { s, t, c, isManualShared } = pendingSlot;
-        const finalSlot = (s && s.trim() !== "") ? { s: s.trim(), t, isManualShared } : null;
-        setData(prev => prev.map(cls => {
-          if (cls.className === c) {
-            const daySlots = [...(cls.schedule[editingCell.day] || Array(7).fill(null))];
-            daySlots[editingCell.timeIdx] = finalSlot;
-            return { ...cls, schedule: { ...cls.schedule, [editingCell.day]: daySlots } };
-          }
-          return cls;
-        }));
-        setEditingCell(null);
-        showToast("已更新課表");
-      };
-
-      const handleCellClick = (day, tIdx) => {
-        if (viewMode === 'class') {
-          setEditingCell({ day, timeIdx: tIdx });
-        } else {
-          const foundClass = data.find(c => c.schedule[day]?.[tIdx]?.t === selectedTeacher);
-          if (foundClass) {
-            setSelectedClass(foundClass.className);
-            setEditingCell({ day, timeIdx: tIdx });
-          } else {
-            showToast("提示：教師視圖空白處無法新增。");
-          }
-        }
-      };
-
-      const finalizeExport = (type) => {
-        if (type === 'pdf') { window.print(); }
-        else {
-          const container = document.getElementById('timetable-export-area');
-          const header = `<html><head><meta charset='utf-8'><style>table { border-collapse: collapse; width: 100%; table-layout: fixed; } th, td { border: 1pt solid black; padding: 12px; text-align: center; vertical-align: middle; font-family: 'Noto Sans TC'; }</style></head><body>`;
-          const blob = new Blob(['\ufeff', header + container.innerHTML + '</body></html>'], { type: 'application/msword' });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url; link.download = `${viewMode === 'class' ? selectedClass : selectedTeacher}_課表.doc`; link.click();
-        }
-        setExportPreview(null);
-      };
-
-      const updateSubjectPlan = (oldName, newName, newTarget) => {
-        setSubjectTargets(prev => {
-          const classTargets = { ...prev[selectedClass] };
-          if (oldName !== newName) delete classTargets[oldName];
-          classTargets[newName] = parseInt(newTarget) || 0;
-          return { ...prev, [selectedClass]: classTargets };
-        });
-      };
-
-      const removeSubjectPlan = (name) => {
-        setSubjectTargets(prev => {
-          const next = { ...prev[selectedClass] }; delete next[name];
-          return { ...prev, [selectedClass]: next };
-        });
-      };
-
-      React.useEffect(() => {
-        if (editingCell) {
-          const cls = data.find(c => c.className === selectedClass);
-          const slot = cls?.schedule[editingCell.day]?.[editingCell.timeIdx];
-          setPendingSlot({ s: slot?.s || "", t: slot?.t || cls?.homeroomTeacher || "", c: selectedClass, isManualShared: !!slot?.isManualShared });
-        }
-      }, [editingCell, selectedClass]);
-
-      return (
-        <div className="min-h-screen bg-[#F1F5F9] pb-10 font-black">
-          {toast && <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-full shadow-2xl bg-slate-800 text-white animate-bounce">{toast}</div>}
-
-          {/* 彈窗 UI */}
-          {deletePending && (
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[95] flex items-center justify-center p-4">
-              <div className="bg-white rounded-[32px] p-8 shadow-2xl w-full max-w-sm text-center border-4 border-rose-50 font-black">
-                <h3 className="text-xl mb-2">確定刪除 {deletePending}？</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <button onClick={() => setDeletePending(null)} className="py-3 bg-slate-100 rounded-2xl font-black">取消</button>
-                  <button onClick={executeDelete} className="py-3 bg-rose-600 text-white rounded-2xl font-black shadow-lg">確認刪除</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {renamePending && (
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[95] flex items-center justify-center p-4">
-              <div className="bg-white rounded-[32px] p-8 shadow-2xl w-full max-w-sm text-center border-4 border-indigo-50 font-black font-black">
-                <h3 className="text-xl mb-4 font-black font-black">修改教室名稱</h3>
-                <input autoFocus className="w-full bg-slate-50 border-2 rounded-2xl p-4 text-center text-lg font-black mb-8" value={newClassNameInput} onChange={(e) => setNewClassNameInput(e.target.value)} />
-                <div className="grid grid-cols-2 gap-4">
-                  <button onClick={() => setRenamePending(null)} className="py-3 bg-slate-100 rounded-2xl font-black font-black">取消</button>
-                  <button onClick={executeRename} className="py-3 bg-indigo-600 text-white rounded-2xl font-black shadow-lg">確認修改</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {addPlanPending && (
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[95] flex items-center justify-center p-4">
-              <div className="bg-white rounded-[32px] p-8 shadow-2xl w-full max-w-sm text-center border-4 border-indigo-50 font-black font-black">
-                <h3 className="text-xl mb-4">新增計畫科目</h3>
-                <input autoFocus className="w-full bg-slate-50 border-2 rounded-2xl p-4 text-center text-lg font-black outline-none mb-8 font-black" value={newPlanNameInput} onChange={(e) => setNewPlanNameInput(e.target.value)} />
-                <div className="grid grid-cols-2 gap-4 font-black">
-                  <button onClick={() => setAddPlanPending(false)} className="py-3 bg-slate-100 rounded-2xl font-black font-black">取消</button>
-                  <button onClick={executeAddPlan} className="py-3 bg-indigo-600 text-white rounded-2xl font-black shadow-lg">確認新增</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <header className="bg-white border-b sticky top-0 z-40 px-6 py-4 flex flex-col lg:flex-row items-center justify-between gap-4 shadow-sm print:hidden font-black">
-            <div className="flex items-center gap-4 text-left font-black">
-              <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><IconSchool /></div>
-              <h1 className="text-xl font-black text-slate-800">國小排課系統</h1>
-            </div>
-            <div className="flex items-center gap-3">
-              {overlaps.length > 0 && <button onClick={() => setShowConflictList(true)} className="bg-rose-600 text-white px-4 py-2 rounded-xl text-xs font-black animate-pulse shadow-md hover:bg-rose-700 flex items-center gap-2 font-black font-black"><IconBell /> {overlaps.length} 衝突偵測</button>}
-              <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-2xl border font-black">
-                <button onClick={() => setViewMode('class')} className={`px-4 py-2 rounded-xl text-sm transition-all font-black ${viewMode === 'class' ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>班級視圖</button>
-                <button onClick={() => setViewMode('teacher')} className={`px-4 py-2 rounded-xl text-sm transition-all font-black ${viewMode === 'teacher' ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}>教師視圖</button>
-                <button onClick={() => setIsEditMode(!isEditMode)} className={`px-4 py-2 rounded-xl text-sm flex items-center gap-2 transition-all font-black font-black ${isEditMode ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white text-slate-400'}`}><IconEdit /> {isEditMode ? '結束排課' : '排課模式'}</button>
-              </div>
-              <button onClick={() => setShowClassManager(true)} className="p-3 bg-white border rounded-xl hover:bg-slate-50 shadow-sm font-black font-black font-black"><IconSettings /></button>
-            </div>
-          </header>
-
-          <main className="max-w-[1600px] mx-auto p-4 lg:p-8 space-y-6">
-            <div className="bg-white p-5 rounded-[28px] border flex items-center justify-between gap-6 shadow-sm overflow-x-auto custom-scroll print:hidden">
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-xs font-black text-slate-400 uppercase tracking-widest font-black">目前選擇：</span>
-                  <select value={viewMode === 'class' ? selectedClass : selectedTeacher} onChange={e => viewMode === 'class' ? setSelectedClass(e.target.value) : setSelectedTeacher(e.target.value)} className="bg-slate-50 border rounded-xl px-4 py-2 text-base font-black text-slate-700 min-w-[160px] cursor-pointer">
-                    {viewMode === 'class' ? classList.map(c => <option key={c} value={c}>{c}</option>) : teachersList.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-                <button onClick={() => setIsGridExpanded(!isGridExpanded)} className={`px-5 py-2 border rounded-xl text-sm font-black flex items-center gap-2 transition-all ${isGridExpanded ? 'bg-indigo-50 border-indigo-200 text-indigo-600 shadow-sm font-black' : 'bg-white text-slate-500 font-black'}`}><IconChart /> 教學計畫統計</button>
-              </div>
-              <div className="flex items-center gap-3 shrink-0 font-black">
-                <button onClick={() => setExportPreview('pdf')} className="bg-slate-800 text-white px-6 py-2 rounded-xl text-sm font-black flex items-center gap-2 shadow hover:bg-black font-black"><IconPrint /> PDF 匯出</button>
-                <button onClick={() => setExportPreview('word')} className="border-2 border-indigo-600 text-indigo-600 px-6 py-2 rounded-xl text-sm font-black flex items-center gap-2 hover:bg-indigo-50 font-black font-black font-black font-black"><IconFile /> Word 匯出</button>
-              </div>
-            </div>
-
-            {isGridExpanded && (
-              <div className="bg-white rounded-[32px] border p-8 shadow-sm text-left animate-in slide-in-from-top-4 duration-300 print:hidden font-black">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-black text-slate-800 flex items-center gap-3">{viewMode === 'class' ? `${selectedClass} 節數計畫` : `${selectedTeacher} 授課統計`}</h2>
-                  {isEditMode && viewMode === 'class' && <button onClick={() => setAddPlanPending(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg">+ 新增計畫科目</button>}
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                  {viewMode === 'teacher' && (
-                    <div className="p-4 rounded-[24px] border-4 border-indigo-200 bg-indigo-50 flex flex-col items-center justify-center text-center shadow-md">
-                      <div className="text-xs font-black text-indigo-500 mb-1">總授課節數</div>
-                      <div className="text-4xl font-black text-indigo-700 tracking-tighter">{stats.total} <span className="text-xs font-black font-black">節</span></div>
-                      <div className="mt-2 text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full">全校累計</div>
-                    </div>
-                  )}
-                  {(viewMode === 'class' ? stats : stats.items).map((s, idx) => {
-                    const isComplete = s.current === s.target;
-                    return (
-                      <div key={idx} className={`p-4 rounded-[24px] border-2 transition-all flex flex-col relative group ${isEditMode && viewMode === 'class' ? 'border-indigo-300 bg-indigo-50/20 font-black' : (isComplete ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-100 font-black')}`}>
-                        {isEditMode && viewMode === 'class' && <button onClick={() => removeSubjectPlan(s.subject)} className="absolute -top-2 -right-2 bg-rose-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 z-10 transition-all"><IconX size={10} /></button>}
-                        {isEditMode && viewMode === 'class' ? (
-                          <div className="space-y-2">
-                            <input className="w-full bg-white border rounded-lg p-1 text-xs font-black text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-300 font-black" value={s.subject} onChange={(e) => updateSubjectPlan(s.subject, e.target.value, s.target)} />
-                            <div className="flex items-center justify-between text-[10px] text-slate-400 font-black font-black font-black">應排: <input type="number" className="w-12 bg-white border rounded-lg p-1 text-center font-black outline-none font-black" value={s.target} onChange={(e) => updateSubjectPlan(s.subject, s.subject, e.target.value)} /></div>
-                            <div className="text-[10px] text-indigo-500 text-center">已排：{s.current} 節</div>
-                          </div>
-                        ) : (
-                          <div className="text-center">
-                            <div className="text-xs font-black text-slate-500 mb-1 truncate font-black font-black">{s.subject}</div>
-                            <div className={`text-2xl font-black ${viewMode === 'class' && isComplete ? 'text-emerald-600' : 'text-indigo-600'}`}>{s.current} {s.target ? <span className="text-xs opacity-50 font-bold font-black">/ {s.target}</span> : <span className="text-xs opacity-50">節</span>}</div>
-                            <div className={`mt-2 text-[9px] px-2 py-0.5 rounded-full inline-block font-black ${viewMode === 'class' && isComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>{viewMode === 'class' ? (isComplete ? '達成' : '排課中') : '授課科目'}</div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="w-full overflow-x-auto custom-scroll pb-4 font-black">
-              <div id="timetable-container" className="bg-white rounded-[40px] border shadow-sm overflow-hidden min-w-[1000px] print:min-w-0">
-                <table className="fixed-table border-collapse font-black font-black">
-                  <thead><tr className="bg-slate-50 text-slate-400 border-b font-black font-black font-black font-black font-black"><th>時間</th>{DAYS.map(d => <th key={d}>{d}</th>)}</tr></thead>
-                  <tbody className="divide-y">
-                    {TIMES.map((time, tIdx) => (
-                      <tr key={time.id}>
-                        <td className="py-8 px-2 text-center border-r bg-slate-50/10 font-black"><span className="text-xl text-slate-800 block leading-none font-black font-black font-black font-black">{time.period}</span><span className="text-[10px] text-slate-400 mt-2 block font-normal font-black">{time.time}</span></td>
-                        {DAYS.map(day => {
-                          const cls = data.find(c => c.className === selectedClass);
-                          let slot = null;
-                          if (viewMode === 'class') slot = cls?.schedule[day]?.[tIdx];
-                          else data.forEach(c => { const s = c.schedule[day]?.[tIdx]; if (s && s.t === selectedTeacher) slot = { ...s, displayLabel: c.className }; });
-                          const overlap = slot && viewMode === 'class' ? getOverlapInfo(slot.t, slot.s, day, tIdx, selectedClass) : null;
-                          const isConflict = overlap && !slot?.isManualShared;
-                          const cellBg = slot ? (slot.isManualShared ? 'bg-purple-600 text-white shadow-lg' : (isConflict ? 'bg-rose-50 border-2 border-rose-500 overlap-warning shadow-xl' : 'bg-white border border-slate-100 shadow-sm')) : (isEditMode ? 'bg-white border-2 border-dashed border-slate-200' : 'bg-slate-50/50');
-                          return (
-                            <td key={day} className="p-2 border-r align-top relative font-black">
-                              <div onClick={() => handleCellClick(day, tIdx)} className={`lesson-cell min-h-[110px] p-4 flex flex-col items-center justify-center relative font-black font-black font-black font-black ${cellBg}`}>
-                                {slot ? (
-                                  <div className="text-center w-full">
-                                    <div className="text-xl font-black tracking-tight">{slot.s}</div>
-                                    <div className="text-[10px] opacity-70 font-black mt-1 uppercase font-black">{viewMode === 'class' ? String(slot.t).replace('老師', '') : slot.displayLabel}</div>
-                                    {isConflict && <span className="mt-2 bg-rose-600 text-white text-[9px] px-2 py-0.5 rounded-full animate-bounce inline-block">衝突 !</span>}
-                                    {slot.isManualShared && <span className="mt-2 bg-white/20 text-[9px] px-2 py-0.5 rounded-full border border-white/30 font-black inline-block font-black font-black font-black">✓ 合上</span>}
-                                  </div>
-                                ) : (isEditMode && <IconPlus className="text-slate-300" />)}
-                              </div>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </main>
-
-          {showClassManager && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[80] flex items-center justify-center p-4 font-black">
-              <div className="bg-white rounded-[44px] shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh] overflow-hidden">
-                <div className="p-8 border-b flex justify-between items-center bg-slate-50/50 font-black font-black font-black">
-                  <div className="text-left font-black"><h2 className="text-2xl text-slate-800 flex items-center gap-2 font-black tracking-tight font-black font-black">全校教室管理</h2><p className="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-black">Management Center</p></div>
-                  <button onClick={() => setShowClassManager(false)} className="p-4 bg-white border rounded-3xl hover:bg-rose-50 shadow-sm transition-all font-black"><IconX /></button>
-                </div>
-                <div className="p-8 overflow-y-auto custom-scroll space-y-10 text-left font-black">
-                  <section>
-                    <label className="block text-[10px] text-slate-400 mb-4 uppercase tracking-widest font-black">資料備份與還原</label>
-                    <div className="grid grid-cols-2 gap-4">
-                      <button onClick={handleFullExport} className="bg-indigo-600 text-white p-4 rounded-3xl font-black shadow-lg flex items-center justify-center gap-2 active:scale-95 font-black font-black"><IconDownload /> 匯出 JSON 備份</button>
-                      <div className="relative font-black">
-                        <input type="file" accept=".json" onChange={handleFullImport} className="absolute inset-0 opacity-0 cursor-pointer z-10 font-black" />
-                        <button className="w-full bg-white border-2 border-indigo-200 text-indigo-600 p-4 rounded-3xl font-black flex items-center justify-center gap-2 font-black font-black">匯入 JSON 備份</button>
-                      </div>
-                    </div>
-                  </section>
-                  <section>
-                    <label className="block text-[10px] text-slate-400 mb-4 uppercase tracking-widest font-black">現有教室清單</label>
-                    <div className="space-y-4">
-                      <div className="flex gap-2 mb-6 font-black font-black">
-                        <input id="new-class-in" className="flex-1 bg-slate-50 border rounded-2xl p-4 font-black outline-none shadow-inner font-black" placeholder="輸入教室名稱..." />
-                        <button onClick={() => { const i = document.getElementById('new-class-in'); handleAddClass(i.value); i.value = ""; }} className="bg-indigo-600 text-white px-8 rounded-2xl font-black shadow-lg active:scale-95 transition-all font-black font-black">新增</button>
-                      </div>
-                      <div className="grid grid-cols-1 gap-3 font-black font-black">
-                        {classList.map(name => (
-                          <div key={name} className="flex justify-between items-center p-5 bg-slate-50 rounded-[28px] border font-black shadow-sm group font-black">
-                            <span className="text-lg text-slate-700 font-black">{name}</span>
-                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all font-black">
-                              <button onClick={() => { setRenamePending({ oldName: name }); setNewClassNameInput(name); }} className="text-amber-500 bg-white border p-3 rounded-2xl shadow-sm hover:bg-amber-50 transition-all font-black font-black font-black"><IconEdit /></button>
-                              <button onClick={() => setDeletePending(name)} className="text-rose-400 bg-white border p-3 rounded-2xl shadow-sm hover:bg-rose-50 transition-all font-black font-black font-black font-black"><IconTrash /></button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </section>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 編輯彈窗 */}
-          {editingCell && (
-            <div className="fixed inset-0 bg-black/50 backdrop-blur-xl z-[60] flex items-center justify-center p-4 overflow-y-auto font-black" onClick={() => setEditingCell(null)}>
-              <div className="bg-white rounded-[48px] shadow-2xl w-full max-w-4xl relative flex flex-col overflow-hidden font-black font-black font-black" onClick={e => e.stopPropagation()} style={{ maxHeight: '90vh' }}>
-                <div className="p-8 border-b flex justify-between items-center bg-white/95 sticky top-0 z-10 font-black font-black">
-                  <div className="text-left font-black font-black font-black font-black font-black"><span className="text-[10px] text-indigo-500 uppercase tracking-widest block font-black font-black">Schedule Editor</span><h2 className="text-2xl text-slate-800 font-black font-black font-black font-black">{selectedClass} · {editingCell.day} {TIMES[editingCell.timeIdx].period}</h2></div>
-                  <button onClick={() => setEditingCell(null)} className="p-4 bg-slate-50 hover:bg-rose-500 hover:text-white rounded-3xl border shadow-sm transition-all font-black"><IconX /></button>
-                </div>
-                <div className="p-10 overflow-y-auto custom-scroll font-black text-left font-black font-black">
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-10 font-black">
-                    <div className="md:col-span-7 space-y-10 font-black">
-                      <div>
-                        <label className="block text-[10px] text-slate-400 mb-4 uppercase tracking-widest font-black font-black">快速填入計畫科目</label>
-                        <div className="grid grid-cols-3 gap-3 font-black font-black">
-                          {(subjectTargets[selectedClass] ? Object.entries(subjectTargets[selectedClass]) : []).map(([s, t], i) => {
-                            const cls = data.find(c => c.className === selectedClass);
-                            let count = 0;
-                            Object.values(cls?.schedule || {}).forEach(day => day.forEach(slot => { if (slot && slot.s === s) count++; }));
-                            return (
-                              <button key={i} onClick={() => setPendingSlot({ ...pendingSlot, s: s })} className={`p-4 rounded-[28px] border-2 text-center transition-all ${pendingSlot.s === s ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-4 ring-indigo-50 shadow-md font-black font-black' : 'bg-white border-slate-100 hover:border-indigo-200 font-black'}`}>
-                                <div className="text-xs font-black truncate">{s}</div><div className="text-[10px] opacity-60 font-black font-black font-black">{count}/{t}</div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <div className="pt-8 border-t space-y-8 text-slate-700 font-black">
-                        <div className="grid grid-cols-2 gap-8 text-center font-black">
-                          <div className="space-y-2 font-black font-black font-black"><label className="text-[11px] text-slate-400 font-black font-black">科目名稱</label><input value={pendingSlot.s} onChange={e => setPendingSlot({ ...pendingSlot, s: e.target.value })} className="w-full bg-slate-50 border rounded-2xl p-5 text-xl font-black outline-none focus:ring-4 focus:ring-indigo-100 text-center" /></div>
-                          <div className="space-y-2 font-black font-black font-black font-black"><label className="text-[11px] text-slate-400 font-black font-black">任課老師</label><select value={pendingSlot.t} onChange={e => setPendingSlot({ ...pendingSlot, t: e.target.value })} className="w-full bg-slate-50 border rounded-2xl p-5 text-lg font-black outline-none focus:ring-4 focus:ring-indigo-100 text-center cursor-pointer font-black font-black font-black font-black">{teachersList.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                        </div>
-                        <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-center justify-center gap-3 font-black">
-                          <p className="text-amber-700 text-sm font-black font-black">修改完成後，請務必點擊下方「儲存變更」按鈕</p>
-                        </div>
-                        <div className="space-y-3 font-black">
-                          <button onClick={() => setPendingSlot({ ...pendingSlot, s: "", t: "" })} className="w-full bg-white border-2 border-rose-500 text-rose-600 py-4 rounded-[36px] font-black text-lg hover:bg-rose-50 flex items-center justify-center gap-2 font-black font-black font-black font-black"><IconEraser /> 清空這節課</button>
-                          <button onClick={handleSave} className="w-full bg-indigo-600 text-white py-5 px-8 rounded-[36px] font-black text-xl hover:bg-indigo-700 shadow-xl flex items-center justify-center gap-3 font-black font-black font-black font-black"><IconSave /> 儲存變更</button>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="md:col-span-5 bg-slate-50 rounded-[44px] p-8 border border-slate-200 shadow-inner flex flex-col font-black">
-                      <h3 className="text-xs font-black text-slate-500 mb-6 uppercase flex items-center gap-2 justify-center tracking-widest font-black">重疊偵測與合上</h3>
-                      <div className="flex-1 space-y-6 font-black">
-                        <div className="min-h-[140px] flex items-center justify-center text-center font-black">
-                          {getOverlapInfo(pendingSlot.t, pendingSlot.s, editingCell.day, editingCell.timeIdx, selectedClass) ? (
-                            <div className={`w-full p-6 rounded-[32px] border-2 shadow-sm flex flex-col items-center gap-2 font-black font-black font-black font-black font-black ${pendingSlot.isManualShared ? 'bg-indigo-100 border-indigo-200 text-indigo-800' : 'bg-rose-100 border-rose-200 text-rose-800'}`}>
-                              <div className="text-xs font-black uppercase opacity-60 font-black font-black font-black">衝突警告</div>
-                              <p className="text-sm font-black italic font-black font-black font-black">「{pendingSlot.t}」在 {getOverlapInfo(pendingSlot.t, pendingSlot.s, editingCell.day, editingCell.timeIdx, selectedClass).otherClass} 已排課</p>
-                            </div>
-                          ) : (
-                            <div className="text-center opacity-30 font-black"><IconCheck size={24} className="mx-auto mb-2 font-black font-black font-black font-black" /><p className="text-[10px] uppercase font-black font-black">目前無任課衝突</p></div>
-                          )}
-                        </div>
-                        <div className="h-px bg-slate-200 w-full font-black"></div>
-                        <button onClick={() => setPendingSlot({ ...pendingSlot, isManualShared: !pendingSlot.isManualShared })} className={`w-full p-6 rounded-[32px] border-2 transition-all font-black font-black ${pendingSlot.isManualShared ? 'bg-indigo-600 border-indigo-700 text-white shadow-lg shadow-indigo-100 translate-y-[-2px] font-black font-black font-black' : 'bg-white border-slate-300 text-slate-500 hover:border-indigo-400 font-black'}`}>
-                          <div className="flex flex-col items-center gap-2 font-black font-black font-black">
-                            <div className={`p-2 rounded-full font-black font-black ${pendingSlot.isManualShared ? 'bg-white text-indigo-600' : 'bg-slate-100 text-slate-400'}`}>{pendingSlot.isManualShared ? <IconCheck /> : <IconSync />}</div>
-                            <span className="text-lg font-black font-black font-black">{pendingSlot.isManualShared ? "✓ 已標記為合上" : "標記為跨班「合上」"}</span>
-                          </div>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 衝突清單詳細資料 */}
-          {showConflictList && (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[90] flex items-center justify-center p-4">
-              <div className="bg-white rounded-[44px] shadow-2xl w-full max-w-4xl flex flex-col max-h-[85vh] overflow-hidden font-black">
-                <div className="p-8 border-b flex justify-between items-center bg-rose-50/50 sticky top-0 z-10 font-black font-black">
-                  <div className="text-left font-black font-black font-black font-black"><h2 className="text-2xl text-rose-700 flex items-center gap-2 font-black font-black font-black"><IconBell /> 任課重疊詳細清單</h2></div>
-                  <button onClick={() => setShowConflictList(false)} className="p-4 bg-white border rounded-3xl hover:bg-rose-100 shadow-sm transition-all font-black"><IconX /></button>
-                </div>
-                <div className="p-10 overflow-y-auto custom-scroll space-y-4 text-left font-black">
-                  {overlaps.map((conflict, idx) => (
-                    <div key={idx} className={`p-6 rounded-[32px] border-2 flex items-center justify-between gap-6 font-black font-black ${conflict.isManualShared ? 'bg-indigo-50 border-indigo-100 opacity-60 font-black' : 'bg-rose-50 border-rose-100 shadow-sm font-black'}`}>
-                      <div className="flex items-center gap-6 font-black font-black">
-                        <div className={`p-4 rounded-2xl font-black text-center min-w-[100px] ${conflict.isManualShared ? 'bg-indigo-600 text-white' : 'bg-rose-600 text-white'}`}><div className="text-xs opacity-70 mb-1 font-black font-black">{conflict.day}</div><div className="text-lg leading-none font-black">{conflict.timeLabel}</div></div>
-                        <div><div className="text-xl mb-1 font-black font-black">{conflict.teacher}</div><div className="text-sm opacity-80 font-black">{conflict.classes[0]} ({conflict.subjects[0]}) 與 {conflict.classes[1]} ({conflict.subjects[1]})</div></div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        {conflict.isManualShared ? <span className="bg-indigo-600 text-white px-4 py-2 rounded-2xl text-xs font-black">✓ 已標記合上</span> : <span className="bg-rose-600 text-white px-4 py-2 rounded-2xl text-xs font-black animate-pulse font-black font-black font-black">衝突中</span>}
-                        <button onClick={() => { setViewMode('class'); setSelectedClass(conflict.classes[0]); setShowConflictList(false); }} className="p-3 bg-white border rounded-2xl hover:bg-slate-50 transition-all shadow-sm font-black font-black font-black font-black font-black font-black"><IconEye /></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 匯出預覽視窗 */}
-          {exportPreview && (
-            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[70] flex items-center justify-center p-4">
-              <div className="bg-white rounded-[48px] shadow-2xl w-full max-w-6xl flex flex-col max-h-[90vh] overflow-hidden font-black">
-                <div className="p-8 border-b flex justify-between items-center bg-slate-50/50">
-                  <h2 className="text-2xl text-slate-800 font-black tracking-tight">課表匯出預覽 ({viewMode === 'class' ? '班級' : '教師'})</h2>
-                  <button onClick={() => setExportPreview(null)} className="p-4 bg-white border rounded-2xl hover:bg-rose-50 transition-all font-black"><IconX /></button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-10 bg-slate-100/30 custom-scroll text-center">
-                  <div id="timetable-export-area" className="bg-white p-12 shadow-inner border rounded-[40px] min-w-[850px] mx-auto scale-90 origin-top inline-block border-2 border-slate-900 font-black">
-                    <h1 className="text-3xl font-black text-center mb-10 font-black">{viewMode === 'class' ? selectedClass : selectedTeacher} 課表</h1>
-                    <table className="w-full border-2 border-black table-fixed text-center font-black">
-                      <thead><tr className="bg-slate-100 font-black"><th className="border-2 border-black p-4 w-28 text-xl font-black">節次</th>{DAYS.map(d => <th key={d} className="border-2 border-black p-4 text-xl">{d}</th>)}</tr></thead>
-                      <tbody>
-                        {TIMES.map((t, idx) => (
-                          <tr key={idx}>
-                            <td className="border-2 border-black p-4 bg-slate-50 font-black font-black"><div className="text-lg leading-tight">{t.period}</div><div className="text-[10px] opacity-60 mt-1 font-black font-black">{t.time}</div></td>
-                            {DAYS.map(d => {
-                              let cell = null;
-                              if (viewMode === 'class') {
-                                cell = data.find(c => c.className === selectedClass)?.schedule[d]?.[idx];
-                              } else {
-                                data.forEach(c => {
-                                  const s = c.schedule[d]?.[idx];
-                                  if (s && s.t === selectedTeacher) cell = { ...s, displayLabel: c.className };
-                                });
-                              }
-                              return (
-                                <td key={d} className="border-2 border-black p-4 h-32 align-middle font-black font-black font-black">
-                                  {cell && (
-                                    <div className="font-black">
-                                      <div style={{ fontSize: '18pt', fontWeight: 'bold' }}>{cell.s}</div>
-                                      <div style={{ fontSize: '10pt', fontWeight: 'bold', color: '#555', marginTop: '4pt' }}>
-                                        {viewMode === 'class' ? cell.t : cell.displayLabel}
-                                      </div>
-                                    </div>
-                                  )}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                <div className="p-8 border-t bg-white flex justify-center gap-6 font-black">
-                  <button onClick={() => setExportPreview(null)} className="px-10 py-4 rounded-3xl bg-slate-100 text-slate-500 hover:bg-slate-200 transition-all font-black">取消</button>
-                  <button onClick={() => finalizeExport(exportPreview)} className={`px-12 py-4 rounded-3xl text-white shadow-xl flex items-center gap-3 active:scale-95 transition-all ${exportPreview === 'pdf' ? 'bg-slate-900 shadow-slate-300 font-black' : 'bg-indigo-600 shadow-indigo-100 font-black'} font-black font-black font-black font-black`}><IconEye /> 確認匯出</button>
-                </div>
-              </div>
-            </div>
-          )}
+  {/* Header */}
+  <header
+    className="flex flex-col xl:flex-row justify-between items-center mb-6 gap-4 no-print bg-white p-4 rounded-3xl shadow-sm border border-slate-200">
+    <div className="flex items-center gap-4">
+      <div className="bg-indigo-600 p-2.5 rounded-2xl shadow-lg text-white">
+        <Calendar size={28} />
+      </div>
+      <div>
+        <h1 className="text-xl font-black text-indigo-900 tracking-tighter uppercase">國小智慧排課系統 PRO</h1>
+      </div>
+    </div>
+    <div className="flex flex-wrap gap-2 justify-end items-center flex-1">
+      <button onClick={()=> setShowSmartModal(true)} className="flex items-center gap-2 bg-gradient-to-r from-amber-500
+        to-orange-600 text-white px-4 py-2 rounded-xl font-bold shadow-md hover:scale-[1.02] active:scale-95
+        transition-all">
+        <Zap size={16} fill="currentColor" /> 智慧排課
+      </button>
+      <div className="relative">
+        <button onClick={()=> setShowTools(!showTools)} className="flex items-center gap-2 bg-slate-50 text-indigo-600
+          border border-indigo-200 px-4 py-2 rounded-xl font-bold hover:bg-white transition-all shadow-sm">
+          <Save size={16} /> 列印與備份
+        </button>
+        {showTools && (
+        <div
+          className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-2xl border border-slate-100 z-[9000] p-2 animate-in fade-in">
+          <button onClick={()=> { setShowPreview(true); setShowTools(false); }} className="w-full text-left px-4 py-2
+            hover:bg-indigo-50 rounded-lg flex items-center gap-3 text-sm font-bold text-indigo-600">
+            <Eye size={16} /> 匯出預覽與列印
+          </button>
+          <div className="h-px bg-slate-100 my-1"></div>
+          <button onClick={backupData}
+            className="w-full text-left px-4 py-2 hover:bg-slate-50 rounded-lg flex items-center gap-3 text-sm font-medium text-slate-600">
+            <Download size={16} /> 下載備份
+          </button>
+          <button onClick={()=> fileInputRef.current.click()} className="w-full text-left px-4 py-2 hover:bg-slate-50
+            rounded-lg flex items-center gap-3 text-sm font-medium text-slate-600">
+            <Upload size={16} /> 上傳還原
+          </button>
+          <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleRestore} />
         </div>
-      );
-    };
+        )}
+      </div>
+      <button onClick={()=> { setEditingTeacher(null); setNewTeacher({ name: '', type: '導師', homeClassId: '', maxHours:
+        16, availability: {}, specialties: [], preferredRoomId: '' }); setShowTeacherModal(true); }} className="flex
+        items-center gap-2 bg-slate-50 text-slate-700 border border-slate-200 px-3 py-2 rounded-xl hover:bg-white
+        shadow-sm transition-all text-xs font-black tracking-tight">
+        <UserPlus size={16} /> 教師管理
+      </button>
+      <button onClick={()=> setShowRoomModal(true)} className="flex items-center gap-2 bg-slate-50 text-slate-700 border
+        border-slate-200 px-3 py-2 rounded-xl hover:bg-white shadow-sm transition-all text-xs font-black
+        tracking-tight">
+        <Settings size={16} /> 教室管理
+      </button>
+      <button onClick={()=> { setShowSubjectModal(true); setSubjectModalTab('list'); }} className="flex items-center
+        gap-2 bg-slate-50 text-slate-700 border border-slate-200 px-3 py-2 rounded-xl hover:bg-white shadow-sm
+        transition-all text-xs font-black tracking-tight">
+        <BookOpen size={16} /> 科目管理
+      </button>
+    </div>
+  </header>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-  </script>
-</body>
+  {message && (
+  <div
+    className="fixed top-24 right-6 z-[9999] px-6 py-3 rounded-2xl shadow-xl font-bold text-white flex items-center gap-3 bg-emerald-500 animate-in slide-in-from-right-8">
+    <CheckCircle2 size={18} /> {message.text}
+  </div>
+  )}
 
-</html>
+  <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 text-sm no-print">
+    {/* Sidebar Area */}
+    <aside className="xl:col-span-3 space-y-4">
+      <div className="bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 flex gap-1">
+        {['class', 'teacher', 'room'].map(m => (
+        <button key={m} onClick={()=> { setViewMode(m);
+          setSelectedTarget(m==='class'?'一甲':m==='teacher'?(teachers[0]?.id || ''):rooms[0]); }} className={`flex-1
+          py-1.5 rounded-xl font-black transition-all ${viewMode===m?'bg-indigo-600 text-white
+          shadow-lg':'text-slate-400 hover:bg-slate-50'}`}>
+          {m==='class'?'班級':m==='teacher'?'教師':'教室'}
+        </button>
+        ))}
+      </div>
+
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+        <select value={selectedTarget} onChange={(e)=> setSelectedTarget(e.target.value)} className="w-full bg-slate-50
+          border border-slate-200 rounded-xl p-2.5 font-bold text-slate-700 outline-none">
+          {viewMode === 'class' && GRADES.map((g, i) => <option key={i} value={g}>{g}</option>)}
+          {viewMode === 'teacher' && teachers.map((t, i) => <option key={i} value={t.id}>{t.name}</option>)}
+          {viewMode === 'room' && rooms.map((r, i) => <option key={i} value={r}>{r}</option>)}
+        </select>
+      </div>
+
+      {viewMode === 'class' && (
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
+        <div className="flex justify-between items-center p-3 bg-indigo-50/20 border-b border-indigo-100 cursor-pointer"
+          onClick={()=> setIsClassListCollapsed(!isClassListCollapsed)}>
+          <h3 className="font-black text-indigo-900 text-[11px] flex items-center gap-2 uppercase tracking-widest">
+            <BarChart3 size={14} /> 班級節數控管
+          </h3>
+          <ChevronDown size={14} className={isClassListCollapsed ? '' : 'rotate-180' } />
+        </div>
+        {!isClassListCollapsed && (
+        <div className="p-2 grid grid-cols-2 gap-1.5 animate-in fade-in">
+          {GRADES.map((g, i) => {
+          const stats = classStatsData[g]?.total || 0;
+          const target = gradeTargets[g] || 0;
+          return (
+          <div key={i} onClick={()=> openGradeTargetEdit(g)} className={`flex flex-col p-2 rounded-lg border
+            transition-all cursor-pointer hover:shadow-md ${stats > target ? 'bg-red-50 border-red-200' : stats ===
+            target ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100'}`}>
+            <div className="flex items-center justify-between mb-0.5"><span
+                className="font-black text-slate-700 text-[10px]">{g}</span>{stats > target ?
+              <AlertTriangle className="text-red-500" size={12} /> : stats === target ?
+              <CheckCircle2 className="text-emerald-500" size={12} /> :
+              <Clock className="text-indigo-300" size={12} />}
+            </div>
+            <div className="text-[10px] font-bold text-slate-400">{String(stats)} / {String(target)} 節</div>
+          </div>
+          );
+          })}
+        </div>
+        )}
+      </div>
+      )}
+
+      {viewMode === 'teacher' && (
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
+        <div className="flex justify-between items-center p-3 bg-slate-50/50 border-b border-slate-100 cursor-pointer"
+          onClick={()=> setIsTeacherListCollapsed(!isTeacherListCollapsed)}>
+          <h3 className="font-black text-slate-700 text-[11px] flex items-center gap-2 uppercase tracking-widest">
+            <User size={14} /> 教師負荷監控
+          </h3>
+          <ChevronDown size={14} className={isTeacherListCollapsed ? '' : 'rotate-180' } />
+        </div>
+        {!isTeacherListCollapsed && (
+        <div className="p-2 grid grid-cols-1 gap-1.5 max-h-[400px] overflow-y-auto custom-scrollbar animate-in fade-in">
+          {teachers.map((t, i) => (
+          <div key={i} className={`flex justify-between items-center p-2.5 rounded-lg border bg-white relative group
+            ${teacherStatsData[t.id]> t.maxHours ? 'bg-orange-50 border-orange-200' : teacherStatsData[t.id] ===
+            t.maxHours ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50'}`}>
+            <div className="flex flex-col">
+              <span className="font-bold text-slate-700 text-[10px] truncate">{t.name}</span>
+              <span className="text-[9px] font-black text-slate-400">{String(teacherStatsData[t.id] || 0)} /
+                {String(t.maxHours)} 節</span>
+            </div>
+            <div className="flex gap-1">
+              <button onClick={(e)=> { e.stopPropagation(); setEditingTeacher(t); setNewTeacher(t);
+                setShowTeacherModal(true); }} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-md border
+                border-indigo-100 shadow-sm hover:bg-indigo-600 hover:text-white transition-all">
+                <Edit2 size={12} />
+              </button>
+              <button onClick={(e)=> { e.stopPropagation(); setDeleteConfirm({ isOpen: true, type: 'teacher', targetId:
+                t.id, label: t.name }); }} className="p-1.5 bg-red-50 text-red-500 rounded-md border border-red-100
+                shadow-sm hover:bg-red-600 hover:text-white transition-all">
+                <Trash2 size={12} />
+              </button>
+            </div>
+          </div>
+          ))}
+        </div>
+        )}
+      </div>
+      )}
+
+      {viewMode === 'room' && (
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in">
+        <div className="flex justify-between items-center p-3 bg-slate-50/50 border-b border-slate-100 cursor-pointer"
+          onClick={()=> setIsRoomListCollapsed(!isRoomListCollapsed)}>
+          <h3 className="font-black text-slate-700 text-[11px] flex items-center gap-2 uppercase tracking-widest">
+            <Monitor size={14} /> 教室佔用清單
+          </h3>
+          <ChevronDown size={14} className={isRoomListCollapsed ? '' : 'rotate-180' } />
+        </div>
+        {!isRoomListCollapsed && (
+        <div className="p-2 space-y-1 animate-in fade-in">
+          {rooms.map((r, i) => (
+          <div key={i} className={`flex justify-between items-center p-2 rounded-lg border bg-slate-50 group
+            transition-all ${selectedTarget===r ? 'border-indigo-600 bg-indigo-50 shadow-inner' : '' }`}>
+            <span className="font-bold text-[10px] text-slate-700">{r}</span>
+            <button onClick={()=> { setEditingRoomIndex(i); setRoomInputName(r); setShowRoomModal(true); }}
+              className="p-1 text-indigo-500 hover:bg-white rounded transition-all">
+              <Edit2 size={10} />
+            </button>
+          </div>
+          ))}
+        </div>
+        )}
+      </div>
+      )}
+    </aside>
+
+    {/* Main Timetable Area */}
+    <main
+      className="xl:col-span-9 bg-white rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+      <div className="p-4 border-b bg-slate-50/50 flex justify-between items-center shrink-0">
+        <div className="font-black text-indigo-900 text-sm">{getTargetDisplayName()}</div>
+        {viewMode === 'class' && (
+        <div className="flex gap-4 overflow-x-auto custom-scrollbar pb-1 max-w-[60%]">
+          {subjects.filter(s => (subjectAllocation[selectedTarget]?.[s] || 0) > 0).map((s, i) => {
+          const target = subjectAllocation[selectedTarget][s];
+          const current = classStatsData[selectedTarget]?.bySubject?.[s] || 0;
+          const isOverLimit = current > target;
+          const badgeColor = isOverLimit ? 'bg-red-500 text-white border-red-600 animate-pulse shadow-md' : current ===
+          target ? 'bg-emerald-500 text-white border-emerald-600' : 'bg-white text-slate-400 border-slate-100';
+          return <div key={i} className={`text-[10px] font-black whitespace-nowrap px-2.5 py-1 rounded-lg border
+            transition-all ${badgeColor}`}>{String(s)}: {String(current)}/{String(target)}</div>;
+          })}
+        </div>
+        )}
+      </div>
+      <div className="overflow-x-auto flex-1">
+        <table className="w-full text-[11px] border-collapse table-fixed text-center">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-100 text-slate-400 font-black tracking-widest">
+              <th className="p-3 w-16">時段</th>{DAYS.map((d, i) => <th key={i}
+                className="p-3 text-slate-700 border-x border-slate-50">{d}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {PERIODS.map((p, pIdx) => {
+            const isLunch = p === '午休';
+            return (
+            <tr key={pIdx} className={`border-b border-slate-50 ${isLunch ? 'bg-amber-50/10' : 'hover:bg-slate-50/20'
+              }`}>
+              <td className="p-2 text-center border-r border-slate-50 font-black text-slate-300">
+                <div>{p}</div>
+                <div className="text-[8px] font-mono opacity-50">{pIdx < 4 ? `0${8+pIdx}:40` :
+                    `${13+(pIdx-5)}:30`}</div>
+              </td>
+              {DAYS.map((day, dIdx) => {
+              let c = null;
+              if (viewMode === 'class') c = schedule[`${day}-${p}-${selectedTarget}`];
+              else if (viewMode === 'teacher') c = Object.values(schedule).find(v => v.day === day && v.period === p &&
+              v.teacherId === selectedTarget);
+              else c = Object.values(schedule).find(v => v.day === day && v.period === p && v.roomId ===
+              selectedTarget);
+
+              const pinned = (viewMode === 'class') ? fixedSlots[selectedTarget]?.[`${day}-${p}`] : null;
+              const avail = (viewMode === 'class') ? gradeAvailability[selectedTarget]?.[`${day}-${p}`] !== false :
+              true;
+
+              return (
+              <td key={dIdx} className="p-1 h-24 align-top border-x border-slate-50">
+                {isLunch ? <span className="opacity-20 italic">BREAK</span> : !avail ? (
+                <div
+                  className="h-full bg-slate-100 rounded-xl flex flex-col items-center justify-center opacity-40 shadow-inner">
+                  <LogOut size={16} className="text-slate-300 mb-1" /><span
+                    className="text-[9px] font-black uppercase text-slate-300">放學</span>
+                </div>
+                ) : c ? (
+                <div
+                  className="h-full bg-white border border-indigo-100 rounded-xl p-2 shadow-sm relative group hover:border-indigo-400 transition-all animate-in zoom-in">
+                  <div className="text-indigo-900 font-black text-[10px] mb-0.5 truncate">{String(c.subject)}</div>
+                  <div className="flex flex-col gap-0.5 text-[8px] text-slate-500 font-bold opacity-70">
+                    <div className="flex items-center justify-center gap-1">
+                      <User size={8} />{teachers.find(t=>t.id===c.teacherId)?.name}
+                    </div>
+                    <div className="flex items-center justify-center gap-1">
+                      <MapPin size={8} />{c.roomId}
+                    </div>
+                    {c.jointWith?.length > 0 && <div
+                      className="flex items-center justify-center gap-1 text-indigo-500 font-black scale-90">
+                      <Users size={8} />合班
+                    </div>}
+                  </div>
+                  <button onClick={()=> handleDeleteCourseAt(day, p, c)} className="absolute -top-1.5 -right-1.5
+                    bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 shadow-md scale-75
+                    transition-all">
+                    <Trash2 size={10} />
+                  </button>
+                </div>
+                ) : pinned ? (
+                <div
+                  className="h-full bg-indigo-50/50 border-2 border-dashed border-indigo-200 rounded-xl p-2 flex flex-col items-center justify-center relative animate-pulse opacity-80">
+                  <Pin size={10} className="text-indigo-400 mb-1" />
+                  <div className="text-indigo-600 font-black text-[9px] leading-tight text-center">{String(typeof pinned
+                    === 'object' ? pinned.subject : pinned)}</div>
+                  {pinned.teacherId && <div className="text-[7px] text-slate-400 mt-0.5 truncate w-full">
+                    {teachers.find(t => t.id === pinned.teacherId)?.name}</div>}
+                </div>
+                ) : (
+                <button onClick={()=> { setAssigningSlot({ day, period: p }); setAssignment({ teacherId: viewMode ===
+                  'teacher' ? selectedTarget : '', subject: subjects[0], roomId: rooms[0], targetClass: viewMode ===
+                  'class' ? selectedTarget : '', isJoint: false, jointClassIds: [] }); }} className="w-full h-full
+                  border-2 border-dashed border-slate-100 rounded-xl flex items-center justify-center text-slate-100
+                  hover:border-indigo-200 transition-all group">
+                  <Plus size={20} className="group-hover:rotate-90 transition-transform" />
+                </button>
+                )}
+              </td>
+              );
+              })}
+            </tr>
+            );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  {/* --- MODALS --- */}
+  {showSubjectModal && (
+  <div
+    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[8000] p-4 no-print animate-in fade-in">
+    <div className="bg-white rounded-[2rem] w-full max-w-5xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+        <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+          <BookOpen className="text-indigo-600" /> 排課規則管理
+        </h2><button onClick={()=> setShowSubjectModal(false)}>
+          <X size={24} />
+        </button>
+      </div>
+      <div className="flex border-b shrink-0 bg-slate-50 font-black text-sm">
+        <button onClick={()=> setSubjectModalTab('list')} className={`flex-1 py-4 transition-all ${subjectModalTab ===
+          'list' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400'}`}>1.科目清單</button>
+        <button onClick={()=> setSubjectModalTab('matrix')} className={`flex-1 py-4 transition-all ${subjectModalTab ===
+          'matrix' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400'}`}>2.配節矩陣</button>
+        <button onClick={()=> setSubjectModalTab('fixed')} className={`flex-1 py-4 transition-all ${subjectModalTab ===
+          'fixed' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400'}`}>3.固定模板</button>
+        <button onClick={()=> setSubjectModalTab('availability')} className={`flex-1 py-4 transition-all
+          ${subjectModalTab === 'availability' ? 'bg-white text-indigo-600 border-b-2 border-indigo-600' :
+          'text-slate-400'}`}>4.放學設定</button>
+      </div>
+      <div className="p-8 overflow-y-auto flex-1 custom-scrollbar">
+        {subjectModalTab === 'list' && (
+        <div className="space-y-6 max-w-md mx-auto">
+          <div className="flex gap-2"><input type="text" value={newSubjectName} onChange={e=>
+            setNewSubjectName(e.target.value)} placeholder="新科目" className="flex-1 border border-slate-200 rounded-xl
+            p-3 bg-white font-bold outline-none" /><button onClick={handleSaveSubjectData}
+              className="px-8 py-2 rounded-xl font-bold bg-indigo-600 text-white shadow-md">新增/修改</button></div>
+          <div className="grid grid-cols-2 gap-3">{subjects.map((sub, idx) => (<div key={idx}
+              className="flex justify-between items-center p-3 rounded-xl border group hover:bg-indigo-50 bg-white shadow-sm transition-all">
+              <span className="font-bold text-slate-700">{String(sub)}</span>
+              <div className="flex gap-1"><button onClick={()=> { setEditingSubjectIndex(idx); setNewSubjectName(sub);
+                  }} className="p-1 text-indigo-500 hover:bg-white rounded transition-all">
+                  <Edit2 size={14} />
+                </button><button disabled={subjects.length <=1} onClick={()=> setDeleteConfirm({ isOpen: true, type:
+                  'subject', targetId: sub, label: sub })} className="p-1 text-red-500 transition-all">
+                  <Trash2 size={14} />
+                </button></div>
+            </div>))}</div>
+        </div>
+        )}
+        {subjectModalTab === 'matrix' && (
+        <div
+          className="animate-in slide-in-from-bottom-4 overflow-x-auto rounded-2xl border border-slate-200 shadow-sm bg-white">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="bg-slate-50 text-slate-400 text-[10px] font-black border-b uppercase sticky top-0 z-20">
+                <th className="p-4 text-left border-r sticky left-0 bg-slate-50">科目</th>{GRADES.map(g => { const sum =
+                allocationTotalsData[g]; const limit = gradeTargets[g]; return (<th key={g} className={`p-4 text-center
+                  border-r min-w-[110px] ${sum> limit ? 'bg-red-50' : ''}`}><div className="text-indigo-600 font-black">
+                    {g}</div>
+                  <div className={`mt-1 text-[11px] ${sum> limit ? 'text-red-600 font-black animate-pulse' :
+                    'text-slate-400 font-bold'}`}>{String(sum)} / {String(limit)}</div>
+                </th>); })}
+              </tr>
+            </thead>
+            <tbody>{subjects.map((sub, si) => (<tr key={si} className="border-b hover:bg-slate-50/50 transition-colors">
+                <td className="p-4 font-black text-slate-700 border-r sticky left-0 bg-white z-10">{String(sub)}</td>
+                {GRADES.map(g => (<td key={g} className="p-2 border-r text-center"><input type="number"
+                    value={subjectAllocation[g]?.[sub] || 0} onChange={(e)=> { const val = Math.max(0,
+                  parseInt(e.target.value) || 0); setSubjectAllocation(prev => ({ ...prev, [g]: { ...(prev[g] || {}),
+                  [sub]: val } })); }} className={`w-16 text-center border-2 rounded-lg p-2 font-black outline-none
+                  transition-all ${subjectAllocation[g]?.[sub] > 0 ? 'border-indigo-100 text-indigo-600 bg-indigo-50/10'
+                  : 'border-slate-50 text-slate-300'}`} /></td>))}
+              </tr>))}</tbody>
+          </table>
+        </div>
+        )}
+        {subjectModalTab === 'fixed' && (
+        <div className="animate-in slide-in-from-bottom-4 flex flex-col lg:flex-row gap-6">
+          <div className="lg:w-80 space-y-4 shrink-0">
+            <div className="p-4 bg-slate-100 rounded-2xl border border-slate-100 shadow-inner"><label
+                className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2 text-center">1.
+                選取主班級</label>
+              <div className="grid grid-cols-3 gap-2">{GRADES.map(g => (<button key={g} onClick={()=>
+                  setTemplateSelectedGrade(g)} className={`p-2 rounded-xl font-bold text-[10px] border transition-all
+                  ${templateSelectedGrade === g ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white
+                  text-slate-500 border-slate-200'}`}>{g}</button>))}</div>
+            </div>
+            <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 space-y-4 shadow-sm">
+              <div><label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-2">2.
+                  指定科目與老師</label><select value={templateSelectedSubject} onChange={e=>
+                  setTemplateSelectedSubject(e.target.value)} className="w-full p-2 mb-2 rounded-xl border-2
+                  border-indigo-200 text-xs font-black text-indigo-600 shadow-sm">{subjects.map(s => <option key={s}
+                    value={s}>{String(s)}</option>)}</select><select value={templateSelectedTeacherId} onChange={e=>
+                  setTemplateSelectedTeacherId(e.target.value)} className="w-full p-2 rounded-xl border-2
+                  border-indigo-100 text-xs font-black text-slate-600 shadow-sm"><option value="">-- 指定授課老師 --</option>
+                  {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+              <div className="pt-3 border-t border-indigo-100"><label
+                  className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-2 flex items-center gap-1">
+                  <Link size={12} /> 合班設定 (多選)
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">{GRADES.map(g => g !== templateSelectedGrade && (<button
+                    key={g} onClick={()=> setTemplateJointGrades(prev => prev.includes(g) ? prev.filter(x => x !== g) :
+                    [...prev, g])} className={`p-1.5 rounded-lg text-[9px] font-bold border transition-all
+                    ${templateJointGrades.includes(g) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white
+                    text-slate-400 border-slate-200'}`}>{g}</button>))}</div>
+              </div>
+            </div>
+          </div>
+          <div className="flex-1 bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+            <table className="w-full text-[10px] border-collapse text-center">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="p-2 w-12 text-slate-400">時段</th>{DAYS.map(day => <th key={day}
+                    className="p-2 font-black text-slate-400">{day}</th>)}
+                </tr>
+              </thead>
+              <tbody>{PERIODS.map(p => { if (p === '午休') return <tr key={p} className="bg-slate-50/50">
+                  <td className="p-2 font-bold text-slate-300 italic" colSpan={6}>REST</td>
+                </tr>; return (<tr key={p} className="border-b border-slate-50">
+                  <td className="p-2 border-r border-slate-50 font-bold text-slate-300">{p}</td>{DAYS.map(day => {
+                  const sk = `${day}-${p}`; const item = (fixedSlots[templateSelectedGrade] || {})[sk];
+                  return (<td key={day} className="p-1 h-16"><button onClick={()=> {
+                      setFixedSlots(prev => {
+                      const next = { ...prev }; if(!next[templateSelectedGrade]) next[templateSelectedGrade] = {};
+                      if (item) {
+                      if (item.jointGrades) item.jointGrades.forEach(jg => { if (next[jg]) { const nextJ =
+                      {...next[jg]}; delete nextJ[sk]; next[jg] = nextJ; } });
+                      const nextT = {...next[templateSelectedGrade]}; delete nextT[sk]; next[templateSelectedGrade] =
+                      nextT;
+                      } else {
+                      const data = { subject: templateSelectedSubject, teacherId: templateSelectedTeacherId,
+                      jointGrades: templateJointGrades };
+                      next[templateSelectedGrade][sk] = data;
+                      templateJointGrades.forEach(jg => { next[jg] = { ...(next[jg] || {}), [sk]: { subject:
+                      templateSelectedSubject, teacherId: templateSelectedTeacherId, jointGrades:
+                      [templateSelectedGrade, ...templateJointGrades.filter(x => x !== jg)] } }; });
+                      }
+                      return next;
+                      });
+                      }} className={`w-full h-full rounded-xl border-2 border-dashed flex flex-col items-center
+                      justify-center transition-all ${item ? 'bg-indigo-600 text-white border-indigo-600 shadow-md
+                      scale-[1.02]' : 'bg-white text-slate-100 border-slate-100 hover:border-indigo-200'}`}>{item ? (<>
+                        <Pin size={10} className="mb-0.5" /><span
+                          className="font-black text-[9px] leading-tight px-1 text-center">{String(item.subject)}</span>
+                      </>) :
+                      <Plus size={14} />}
+                    </button></td>);
+                  })}
+                </tr>); })}</tbody>
+            </table>
+          </div>
+        </div>
+        )}
+        {subjectModalTab === 'availability' && (
+        <div className="animate-in slide-in-from-bottom-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {GRADES.map(g => (
+            <div key={g} className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="p-3 bg-slate-50 border-b font-black text-indigo-900 text-xs text-center">{g} 放學設定</div>
+              <table className="w-full text-[9px] border-collapse text-center">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-100">
+                    <th className="p-1 w-8"></th>{DAYS.map(day => <th key={day}
+                      className="p-1 font-black text-slate-400">{day}</th>)}
+                  </tr>
+                </thead>
+                <tbody>{PERIODS.map(p => { if (p === '午休') return null; const pi = PERIODS.indexOf(p); return (<tr
+                    key={p} className="border-b border-slate-50">
+                    <td className="p-1 font-bold text-slate-300 text-center">{pi+1}</td>{DAYS.map(day => { const sk =
+                    `${day}-${p}`; const isAvail = (gradeAvailability[g] || {})[sk] !== false; return (<td key={day}
+                      className="p-0.5 h-6"><button onClick={()=> { setGradeAvailability(prev => { const next =
+                        {...prev}; if(!next[g]) next[g] = {}; next[g][sk] = !isAvail; return next; }); }}
+                        className={`w-full h-full rounded transition-all ${isAvail ? 'bg-emerald-50 border
+                        border-emerald-100 hover:bg-emerald-100' : 'bg-slate-300 border border-slate-400
+                        shadow-inner'}`}>{!isAvail &&
+                        <X size={8} className="mx-auto text-slate-500" />}
+                      </button></td>); })}
+                  </tr>); })}</tbody>
+              </table>
+            </div>
+            ))}
+          </div>
+        </div>
+        )}
+      </div>
+      <div className="p-6 bg-slate-50 border-t flex justify-center"><button onClick={()=> setShowSubjectModal(false)}
+          className="px-12 py-3 bg-indigo-600 text-white font-black rounded-2xl shadow-lg hover:bg-indigo-700
+          active:scale-95 transition-all">確認完成設定</button></div>
+    </div>
+  </div>
+  )}
+
+  {/* 教師管理 Modal */}
+  {showTeacherModal && (
+  <div
+    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[9000] p-4 no-print animate-in fade-in">
+    <div className="bg-white rounded-[2rem] w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
+      <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-50/30 shrink-0">
+        <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+          <UserPlus className="text-indigo-600" /> 教師資訊與專長設定
+        </h2><button onClick={()=> setShowTeacherModal(false)}>
+          <X size={24} />
+        </button>
+      </div>
+      <div className="p-8 grid grid-cols-1 lg:grid-cols-3 gap-8 overflow-y-auto flex-1 custom-scrollbar">
+        <div className="space-y-4">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">基本檔案</label>
+          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-4 shadow-inner">
+            <input type="text" placeholder="教師姓名" value={newTeacher.name} onChange={e=> setNewTeacher({...newTeacher,
+            name: e.target.value})} className="w-full border border-slate-200 rounded-xl p-3 bg-white font-bold
+            outline-none shadow-sm focus:ring-2 focus:ring-indigo-500" />
+            <select value={newTeacher.type} onChange={e=> setNewTeacher({...newTeacher, type: e.target.value})}
+              className="w-full border border-slate-200 rounded-xl p-3 bg-white font-bold">{TEACHER_TYPES.map((t, i) =>
+              <option key={i} value={t}>{t}</option>)}</select>
+            <div className="space-y-1.5"><label
+                className="text-[9px] font-black text-indigo-400 flex items-center gap-1 uppercase tracking-tighter">
+                <ShieldCheck size={10} /> 擔任導師班級
+              </label><select value={newTeacher.homeClassId || '' } onChange={e=> setNewTeacher({...newTeacher,
+                homeClassId: e.target.value})} className="w-full border border-slate-200 rounded-xl p-2.5 bg-white
+                font-bold text-xs shadow-sm"><option value="">-- 未指定 --</option>{GRADES.map(g => <option key={g}
+                  value={g}>{g}</option>)}</select></div>
+            <div className="flex items-center justify-between border-t border-slate-200 pt-3"><span
+                className="text-xs font-bold text-slate-500">週授課上限</span><input type="number"
+                value={newTeacher.maxHours} onChange={e=> setNewTeacher({...newTeacher, maxHours: e.target.value})}
+              className="w-16 border border-slate-200 rounded-xl p-2 bg-white font-black text-center shadow-sm" /></div>
+          </div>
+        </div>
+        <div className="space-y-4"><label
+            className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1 flex items-center gap-1.5">
+            <GraduationCap size={14} /> 授課專長
+          </label>
+          <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 shadow-inner">
+            <div className="grid grid-cols-2 gap-1.5 max-h-[300px] overflow-y-auto pr-1">{subjects.map((sub, i) =>
+              (<button key={i} onClick={()=> { const nextS = (newTeacher.specialties || []).includes(sub) ?
+                (newTeacher.specialties || []).filter(s => s !== sub) : [...(newTeacher.specialties || []), sub];
+                setNewTeacher({...newTeacher, specialties: nextS}); }} className={`flex items-center gap-2 p-2
+                rounded-lg border text-[10px] font-black transition-all ${(newTeacher.specialties || []).includes(sub) ?
+                'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-400 border-slate-200
+                hover:border-indigo-300'}`}>{String(sub)}</button>))}</div>
+          </div>
+        </div>
+        <div className="space-y-4"><label
+            className="text-[10px] font-black text-slate-400 uppercase tracking-widest block text-center mb-1">假勤不排課
+            (紅格)</label>
+          <div className="grid grid-cols-6 gap-1 bg-slate-100 p-2 rounded-2xl border border-slate-200 shadow-inner">
+            <div className="h-4"></div> {DAYS.map(day => <div key={day}
+              className="text-[7px] font-black text-center text-slate-400">{day.slice(1)}</div>)}{PERIODS.map((p, pi) =>
+            p !== '午休' && (<React.Fragment key={pi}>
+              <div className="text-[7px] font-black flex items-center text-slate-400">{pi+1}</div>{DAYS.map(day => {
+              const sk = `${day}-${p}`; const isAvail = (newTeacher.availability || {})[sk] !== false; return (<div
+                key={day} onClick={()=> { const na = { ...(newTeacher.availability || {}) }; na[sk] = !isAvail;
+                setNewTeacher({ ...newTeacher, availability: na }); }} className={`h-4 rounded-sm cursor-pointer border
+                transition-all ${isAvail ? 'bg-white' : 'bg-red-500 border-red-600 shadow-sm'}`} />); })}
+            </React.Fragment>))}
+          </div>
+        </div>
+      </div>
+      <div className="p-6 bg-slate-50 border-t flex gap-4 shrink-0"><button onClick={()=> setShowTeacherModal(false)}
+          className="flex-1 py-3 font-black text-slate-700 bg-slate-100 hover:bg-slate-200 transition-all rounded-xl
+          border border-slate-200 shadow-sm">取消返回</button><button onClick={handleSaveTeacherData}
+          className="flex-1 py-3 bg-indigo-600 text-white font-black rounded-2xl shadow-lg hover:bg-indigo-700 active:scale-95 transition-all">確認儲存</button>
+      </div>
+    </div>
+  </div>
+  )}
+
+  {showGradeTargetModal && (
+  <div
+    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[9000] p-4 animate-in zoom-in">
+    <div className="bg-white rounded-3xl w-full max-w-xs shadow-2xl p-6 text-center">
+      <h2 className="text-lg font-black text-slate-800 mb-6 flex items-center justify-center gap-2">
+        <BarChart3 className="text-indigo-600" /> 修改班級總節數
+      </h2>
+      <input type="number" value={tempGradeTarget} onChange={e=> setTempGradeTarget(e.target.value)} className="w-full
+      border-2 border-indigo-100 rounded-2xl p-4 bg-indigo-50/30 font-black text-center text-2xl outline-none" autoFocus
+      />
+      <div className="mt-8 flex gap-3">
+        <button onClick={()=> setShowGradeTargetModal(false)} className="flex-1 py-3 font-black text-slate-700
+          bg-slate-50 rounded-xl transition-all border border-slate-100 shadow-sm">取消</button>
+        <button onClick={handleSaveGradeTarget}
+          className="flex-1 py-3 bg-indigo-600 text-white font-black rounded-xl shadow-lg hover:bg-indigo-700 active:scale-95 transition-all">儲存修改</button>
+      </div>
+    </div>
+  </div>
+  )}
+
+  {deleteConfirm.isOpen && (
+  <div
+    className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center z-[9000] p-4 animate-in zoom-in">
+    <div className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl p-8 text-center animate-in zoom-in">
+      <div
+        className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500 border border-red-100 shadow-red-100">
+        <Trash2 size={32} />
+      </div>
+      <h2 className="text-xl font-black mb-2 text-slate-800">確定刪除？</h2>
+      <div className="flex gap-4">
+        <button onClick={()=> setDeleteConfirm({ isOpen: false, type: null, targetId: null, label: '' })}
+          className="flex-1 py-4 font-black text-slate-700 bg-slate-100 rounded-2xl shadow-sm">取消返回</button>
+        <button onClick={executeDeleteItemFunc}
+          className="flex-1 py-4 font-black text-white bg-red-500 rounded-2xl shadow-lg active:scale-95 transition-all shadow-red-100">確定</button>
+      </div>
+    </div>
+  </div>
+  )}
+
+  {showRoomModal && (
+  <div
+    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[9000] p-4 no-print animate-in fade-in">
+    <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
+        <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+          <Settings className="text-indigo-600" /> 教室管理
+        </h2><button onClick={()=> setShowRoomModal(false)}>
+          <X size={24} />
+        </button>
+      </div>
+      <div className="p-6 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
+        <div className="flex gap-2"><input type="text" value={roomInputName} onChange={e=>
+          setRoomInputName(e.target.value)} placeholder="新教室" className="flex-1 border border-slate-200 rounded-xl p-3
+          bg-white font-bold outline-none shadow-sm focus:ring-2 focus:ring-indigo-500 shadow-sm" /><button
+            onClick={handleSaveRoomData}
+            className="px-6 py-2 rounded-xl font-bold bg-indigo-600 text-white shadow-md hover:bg-indigo-700 transition-all">新增/修改</button>
+        </div>
+        <div className="space-y-2">{rooms.map((room, idx) => (<div key={idx} className={`flex justify-between
+            items-center p-3 rounded-xl border transition-all ${editingRoomIndex===idx
+            ? 'border-amber-500 bg-amber-50 shadow-sm' : 'bg-slate-50 border-slate-100 group' }`}><span
+              className="font-bold text-slate-700">{room}</span>
+            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={()=> {
+                setEditingRoomIndex(idx); setRoomInputName(room); }} className="p-1 text-indigo-500 hover:bg-white
+                rounded transition-all">
+                <Edit2 size={14} />
+              </button><button disabled={rooms.length <=1} onClick={()=> setDeleteConfirm({ isOpen: true, type: 'room',
+                targetId: room, label: room })} className="p-1 text-red-500 hover:bg-red-50 rounded transition-all">
+                <Trash2 size={14} />
+              </button></div>
+          </div>))}</div>
+      </div>
+      <div className="p-4 bg-slate-50 border-t shrink-0 text-center"><button onClick={()=> setShowRoomModal(false)}
+          className="px-10 py-2 font-black text-slate-700 bg-slate-100 hover:bg-slate-200 transition-all
+          hover:text-slate-900 rounded-xl border border-slate-200 transition-all">關閉</button></div>
+    </div>
+  </div>
+  )}
+
+  {showPreview && (
+  <div
+    className="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex flex-col z-[9999] no-print overflow-hidden animate-in fade-in">
+    <div className="bg-indigo-900 text-white p-4 flex justify-between items-center shadow-lg shrink-0">
+      <div className="flex items-center gap-4"><button onClick={()=> setShowPreview(false)} className="hover:bg-white/10
+          p-2 rounded-full transition-colors">
+          <X size={24} />
+        </button>
+        <h2 className="text-lg font-bold text-white">匯出預覽 (A4 橫向)</h2>
+      </div>
+      <div className="flex gap-3"><button onClick={exportToWord}
+          className="flex items-center gap-2 bg-white text-indigo-900 px-4 py-2 rounded-lg font-bold shadow-md hover:bg-white active:scale-95 transition-all">
+          <FileText size={18} /> 匯出 Word
+        </button><button onClick={printToPDF}
+          className="flex items-center gap-2 bg-indigo-500 text-white px-4 py-2 rounded-lg font-bold shadow-lg hover:bg-indigo-400 transition-all active:scale-95">
+          <Printer size={18} /> 列印 / PDF
+        </button></div>
+    </div>
+    <div className="flex-1 overflow-auto p-8 bg-slate-800 custom-scrollbar">
+      <div className="preview-paper" id="preview-table-container">
+        <h1 className="text-3xl font-black text-center mb-6 border-b-2 border-black pb-4 uppercase tracking-tighter">
+          {getTargetDisplayName()}</h1>
+        <table className="w-full border-collapse text-center">
+          <thead>
+            <tr className="bg-slate-50">
+              <th className="border border-black p-2 w-16 text-xs font-black">節次</th>{DAYS.map((day, i) => <th key={i}
+                className="border border-black p-2 font-black text-base">{day}</th>)}
+            </tr>
+          </thead>
+          <tbody>{PERIODS.map((period, pIdx) => (<tr key={pIdx}>
+              <td className="border border-black p-2 text-center font-bold text-xs">{period}</td>{DAYS.map((day, dIdx)
+              => { let course = null; if (viewMode === 'class') course = schedule[`${day}-${period}-${selectedTarget}`];
+              else if (viewMode === 'teacher') course = Object.values(schedule).find(v => v.day === day && v.period ===
+              period && v.teacherId === selectedTarget); else course = Object.values(schedule).find(v => v.day === day
+              && v.period === period && v.roomId === selectedTarget); return (<td key={dIdx}
+                className="border border-black p-2 h-24 vertical-align-middle">{period === '午休' ? <span
+                  className="text-slate-300 italic text-[10px]">休息</span> : course ? (<div>
+                  <div className="font-bold text-sm text-indigo-900">{String(course.subject)}</div>
+                  <div className="text-[10px] font-bold text-slate-600">{teachers.find(t => t.id ===
+                    course.teacherId)?.name}</div>
+                </div>) : null}</td>); })}
+            </tr>))}</tbody>
+        </table>
+        <div className="mt-8 pt-4 border-t border-slate-200 text-right text-[10px] text-slate-400 italic font-medium">
+          製表日期：{new Date().toLocaleString()} | 國小智慧排課系統 PRO</div>
+      </div>
+    </div>
+  </div>
+  )}
+
+  {assigningSlot && (
+  <div
+    className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[9500] p-4 no-print animate-in zoom-in">
+    <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div
+        className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-600 text-white shrink-0 shadow-lg">
+        <div>
+          <h2 className="text-xl font-black text-white">設定排課細節</h2>
+          <p className="text-xs opacity-80 uppercase tracking-widest">{assigningSlot.day} {assigningSlot.period}</p>
+        </div>
+        <button onClick={()=> setAssigningSlot(null)} className="text-white/60 hover:text-white transition-colors">
+          <X size={24} />
+        </button>
+      </div>
+      <div className="p-6 space-y-6 overflow-y-auto flex-1 custom-scrollbar">
+        <div className="grid grid-cols-2 gap-4">
+          <div className={assignment.isJoint ? "col-span-1" : "col-span-2" }><label
+              className="block text-xs font-black text-slate-400 mb-1">主選班級</label><select
+              value={assignment.targetClass} onChange={e=> setAssignment({...assignment, targetClass: e.target.value})}
+              className="w-full border border-slate-200 rounded-xl p-3 bg-white font-bold outline-none">{GRADES.map((g,
+              i) => <option key={i} value={g}>{g}</option>)}</select></div>
+          <div className="col-span-2 flex flex-col p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users size={18} className="text-indigo-600" /><span
+                  className="font-bold text-sm text-indigo-900">多班合班上課</span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox"
+                  checked={assignment.isJoint} onChange={(e)=> setAssignment({...assignment, isJoint:
+                e.target.checked})} className="sr-only peer" /><div
+                  className="w-11 h-6 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-indigo-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 transition-all shadow-inner">
+                </div></label>
+            </div>
+            {assignment.isJoint && (
+            <div className="mt-4 grid grid-cols-3 gap-2 animate-in slide-in-from-top-2">
+              {GRADES.map(g => g !== assignment.targetClass && (
+              <button key={g} onClick={()=> setAssignment(prev => ({ ...prev, jointClassIds:
+                prev.jointClassIds.includes(g) ? prev.jointClassIds.filter(x => x !== g) : [...prev.jointClassIds, g]
+                }))}
+                className={`p-2 rounded-lg text-[10px] font-black border transition-all
+                ${assignment.jointClassIds.includes(g) ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' :
+                'bg-white text-slate-400 border-slate-200'}`}>
+                {g}
+              </button>
+              ))}
+            </div>
+            )}
+          </div>
+          <div className="col-span-2"><label
+              className="block text-xs font-black text-slate-400 mb-1">授課教師</label><select value={assignment.teacherId}
+              onChange={e=> setAssignment({...assignment, teacherId: e.target.value})} className="w-full border
+              border-slate-200 rounded-xl p-3 bg-white font-bold outline-none shadow-sm"><option value="">請選擇...
+              </option>{teachers.map((t, i) => <option key={i} value={t.id}>{t.name} (已排 {String(teacherStatsData[t.id]
+                || 0)}/{String(t.maxHours)})</option>)}</select></div>
+          <div className="col-span-1"><label
+              className="block text-xs font-black text-slate-400 mb-1 uppercase tracking-widest">科目</label><select
+              value={assignment.subject} onChange={e=> setAssignment({...assignment, subject: e.target.value})}
+              className="w-full border border-slate-200 rounded-xl p-3 bg-white font-bold shadow-sm">{subjects.map((s,
+              i) => <option key={i} value={s}>{String(s)}</option>)}</select></div>
+          <div className="col-span-1"><label
+              className="block text-xs font-black text-slate-400 mb-1 uppercase tracking-widest">教室</label><select
+              value={assignment.roomId} onChange={e=> setAssignment({...assignment, roomId: e.target.value})}
+              className="w-full border border-slate-200 rounded-xl p-3 bg-white font-bold shadow-sm">{rooms.map((r, i)
+              => <option key={i} value={r}>{r}</option>)}</select></div>
+        </div>
+      </div>
+      <div className="p-6 bg-slate-50 border-t flex gap-4 shrink-0">
+        <button onClick={()=> setAssigningSlot(null)} className="flex-1 py-3 font-bold text-slate-700 bg-slate-100
+          hover:bg-slate-200 transition-all rounded-xl border border-slate-200 shadow-sm shadow-slate-100">取消返回</button>
+        <button onClick={handleSaveAssignment} disabled={!assignment.teacherId || !assignment.targetClass ||
+          (assignment.isJoint && assignment.jointClassIds.length===0)}
+          className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black shadow-lg hover:bg-indigo-700 active:scale-95 transition-all">確認排課</button>
+      </div>
+    </div>
+  </div>
+  )}
+</div>
+);
+};
+
+export default App;
