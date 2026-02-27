@@ -50,14 +50,16 @@
 
 本專案採用模組化結構，各項工具獨立於 `web-apps` 資料夾中：
 
-school-portfolio/
+
+```school-portfolio/
 ├── web-apps/
 │   ├── academic-calendar-generator/    # 行事曆產生器
 │   ├── announcement-generator/        # 校園通知單產生器
 │   ├── chinese-checkers-game/         # 跳棋遊戲
 │   └── elementary-multisubject-game/  # 數學大富翁遊戲
 ├── index.html                         # 工具箱入口頁面
-└── README.md                          # 專案說明文件`
+└── README.md                          # 專案說明文件
+```
 
 ---
 
